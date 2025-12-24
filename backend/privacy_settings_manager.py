@@ -1,17 +1,11 @@
 from telethon import TelegramClient, errors
 from telethon.tl.functions.account import SetPrivacyRequest
 from telethon.tl.types import (
-    InputPrivacyKeyPhoneNumber,
     InputPrivacyKeyStatusTimestamp,
     InputPrivacyKeyProfilePhoto,
+    InputPrivacyKeyPhoneNumber,
     InputPrivacyKeyForwards,
-    InputPrivacyKeyPhoneCalls,
-    InputPrivacyKeyVoiceMessages,
-    InputPrivacyKeyMessages,
-    InputPrivacyKeyBirthday,
-    InputPrivacyKeyGifts,
-    InputPrivacyKeyAbout,
-    InputPrivacyKeySavedMusic,
+    InputPrivacyKeyPhoneCall,
     InputPrivacyKeyChatInvite,
     InputPrivacyValueAllowAll,
     InputPrivacyValueAllowContacts,
@@ -25,17 +19,11 @@ API_HASH = 'd512fd74809a4ca3cd59078eef73afcd'
 
 # Mapping of privacy keys to their Telethon classes
 PRIVACY_KEY_MAP = {
-    'InputPrivacyKeyPhoneNumber': InputPrivacyKeyPhoneNumber,
     'InputPrivacyKeyStatusTimestamp': InputPrivacyKeyStatusTimestamp,
     'InputPrivacyKeyProfilePhoto': InputPrivacyKeyProfilePhoto,
+    'InputPrivacyKeyPhoneNumber': InputPrivacyKeyPhoneNumber,
     'InputPrivacyKeyForwards': InputPrivacyKeyForwards,
-    'InputPrivacyKeyPhoneCalls': InputPrivacyKeyPhoneCalls,
-    'InputPrivacyKeyVoiceMessages': InputPrivacyKeyVoiceMessages,
-    'InputPrivacyKeyMessages': InputPrivacyKeyMessages,
-    'InputPrivacyKeyBirthday': InputPrivacyKeyBirthday,
-    'InputPrivacyKeyGifts': InputPrivacyKeyGifts,
-    'InputPrivacyKeyAbout': InputPrivacyKeyAbout,
-    'InputPrivacyKeySavedMusic': InputPrivacyKeySavedMusic,
+    'InputPrivacyKeyPhoneCall': InputPrivacyKeyPhoneCall,
     'InputPrivacyKeyChatInvite': InputPrivacyKeyChatInvite,
 }
 

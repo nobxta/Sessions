@@ -6,11 +6,6 @@ import { API_BASE_URL } from '../config';
 
 const PRIVACY_SETTINGS = [
   {
-    id: 'InputPrivacyKeyPhoneNumber',
-    label: 'Phone Number',
-    description: 'Who can see your phone number'
-  },
-  {
     id: 'InputPrivacyKeyStatusTimestamp',
     label: 'Last Seen & Online',
     description: 'Who can see when you were last seen'
@@ -21,44 +16,19 @@ const PRIVACY_SETTINGS = [
     description: 'Who can see your profile photos'
   },
   {
+    id: 'InputPrivacyKeyPhoneNumber',
+    label: 'Phone Number',
+    description: 'Who can see your phone number'
+  },
+  {
     id: 'InputPrivacyKeyForwards',
     label: 'Forwarded Messages',
     description: 'Who can forward your messages'
   },
   {
-    id: 'InputPrivacyKeyPhoneCalls',
+    id: 'InputPrivacyKeyPhoneCall',
     label: 'Calls',
     description: 'Who can call you'
-  },
-  {
-    id: 'InputPrivacyKeyVoiceMessages',
-    label: 'Voice Messages',
-    description: 'Who can send you voice messages'
-  },
-  {
-    id: 'InputPrivacyKeyMessages',
-    label: 'Messages',
-    description: 'Who can send you messages'
-  },
-  {
-    id: 'InputPrivacyKeyBirthday',
-    label: 'Birthday',
-    description: 'Who can see your birthday'
-  },
-  {
-    id: 'InputPrivacyKeyGifts',
-    label: 'Gifts',
-    description: 'Who can see your gifts'
-  },
-  {
-    id: 'InputPrivacyKeyAbout',
-    label: 'Bio',
-    description: 'Who can see your bio'
-  },
-  {
-    id: 'InputPrivacyKeySavedMusic',
-    label: 'Saved Music',
-    description: 'Who can see your saved music'
   },
   {
     id: 'InputPrivacyKeyChatInvite',
