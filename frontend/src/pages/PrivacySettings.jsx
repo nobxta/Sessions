@@ -110,7 +110,7 @@ const PrivacySettings = () => {
         const formData = new FormData();
         formData.append('file', file);
 
-        const response = await fetch(`${API_BASE_URL}/api/extract-sessions', {
+        const response = await fetch(`${API_BASE_URL}/api/extract-sessions`, {
           method: 'POST',
           body: formData,
         });
@@ -193,7 +193,7 @@ const PrivacySettings = () => {
         settings: settings
       }));
 
-      const response = await fetch(`${API_BASE_URL}/api/privacy-settings', {
+      const response = await fetch(`${API_BASE_URL}/api/privacy-settings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -38,7 +38,7 @@ const TGDNAChecker = () => {
         const formData = new FormData();
         formData.append('file', file);
 
-        const response = await fetch(`${API_BASE_URL}/api/extract-sessions', {
+        const response = await fetch(`${API_BASE_URL}/api/extract-sessions`, {
           method: 'POST',
           body: formData,
         });
@@ -72,7 +72,7 @@ const TGDNAChecker = () => {
     setCheckResults([]);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/check-tgdna', {
+      const response = await fetch(`${API_BASE_URL}/api/check-tgdna`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

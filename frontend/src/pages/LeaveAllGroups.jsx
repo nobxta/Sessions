@@ -50,7 +50,7 @@ const LeaveAllGroups = () => {
         const formData = new FormData();
         formData.append('file', file);
 
-        const response = await fetch(`${API_BASE_URL}/api/extract-sessions', {
+        const response = await fetch(`${API_BASE_URL}/api/extract-sessions`, {
           method: 'POST',
           body: formData,
         });
@@ -90,7 +90,7 @@ const LeaveAllGroups = () => {
       // Log what we're sending for debugging
       console.log('Scanning sessions:', extractedSessions.map(s => ({ name: s.name, path: s.path })));
       
-      const response = await fetch(`${API_BASE_URL}/api/scan-groups', {
+      const response = await fetch(`${API_BASE_URL}/api/scan-groups`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -167,7 +167,7 @@ const LeaveAllGroups = () => {
     });
 
     // Connect WebSocket
-    const ws = new WebSocket(`${WS_BASE_URL}/ws/leave-groups');
+    const ws = new WebSocket(`${WS_BASE_URL}/ws/leave-groups`);
     wsRef.current = ws;
 
     ws.onopen = () => {

@@ -42,7 +42,7 @@ const SessionConverter = () => {
         const formData = new FormData();
         formData.append('file', file);
 
-        const response = await fetch(`${API_BASE_URL}/api/extract-sessions', {
+        const response = await fetch(`${API_BASE_URL}/api/extract-sessions`, {
           method: 'POST',
           body: formData,
         });
@@ -76,7 +76,7 @@ const SessionConverter = () => {
     setConversionResults([]);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/sessions-to-strings', {
+      const response = await fetch(`${API_BASE_URL}/api/sessions-to-strings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -123,7 +123,7 @@ const SessionConverter = () => {
     setError(null);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/strings-to-sessions', {
+      const response = await fetch(`${API_BASE_URL}/api/strings-to-sessions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

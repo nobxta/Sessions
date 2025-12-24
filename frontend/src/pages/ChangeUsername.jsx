@@ -42,7 +42,7 @@ const ChangeUsername = () => {
         const formData = new FormData();
         formData.append('file', file);
 
-        const response = await fetch(`${API_BASE_URL}/api/extract-sessions', {
+        const response = await fetch(`${API_BASE_URL}/api/extract-sessions`, {
           method: 'POST',
           body: formData,
         });
@@ -82,7 +82,7 @@ const ChangeUsername = () => {
     setError(null);
     
     try {
-      const response = await fetch(`${API_BASE_URL}/api/get-user-info', {
+      const response = await fetch(`${API_BASE_URL}/api/get-user-info`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -139,7 +139,7 @@ const ChangeUsername = () => {
         extraction_data: extractionData
       };
 
-      const response = await fetch(`${API_BASE_URL}/api/change-usernames', {
+      const response = await fetch(`${API_BASE_URL}/api/change-usernames`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

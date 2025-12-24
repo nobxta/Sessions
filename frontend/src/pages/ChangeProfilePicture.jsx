@@ -74,7 +74,7 @@ const ChangeProfilePicture = () => {
         const formData = new FormData();
         formData.append('file', file);
 
-        const response = await fetch(`${API_BASE_URL}/api/extract-sessions', {
+        const response = await fetch(`${API_BASE_URL}/api/extract-sessions`, {
           method: 'POST',
           body: formData,
         });
@@ -107,7 +107,7 @@ const ChangeProfilePicture = () => {
     setError(null);
     
     try {
-      const response = await fetch(`${API_BASE_URL}/api/get-user-info', {
+      const response = await fetch(`${API_BASE_URL}/api/get-user-info`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -151,7 +151,7 @@ const ChangeProfilePicture = () => {
         const base64Image = e.target.result.split(',')[1];
         
         // Connect WebSocket
-        const ws = new WebSocket(`${WS_BASE_URL}/ws/change-profile-pictures');
+        const ws = new WebSocket(`${WS_BASE_URL}/ws/change-profile-pictures`);
         wsRef.current = ws;
         
         ws.onopen = () => {

@@ -65,7 +65,7 @@ const SessionMaker = () => {
     setSuccess(null);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/send-otp', {
+      const response = await fetch(`${API_BASE_URL}/api/send-otp`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -107,7 +107,7 @@ const SessionMaker = () => {
     setSuccess(null);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/verify-otp', {
+      const response = await fetch(`${API_BASE_URL}/api/verify-otp`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -162,7 +162,7 @@ const SessionMaker = () => {
     setSuccess(null);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/verify-2fa', {
+      const response = await fetch(`${API_BASE_URL}/api/verify-2fa`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -206,7 +206,7 @@ const SessionMaker = () => {
     setError(null);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/download-session', {
+      const response = await fetch(`${API_BASE_URL}/api/download-session`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -45,7 +45,7 @@ const CodeExtractor = () => {
         const formData = new FormData();
         formData.append('file', file);
 
-        const response = await fetch(`${API_BASE_URL}/api/extract-sessions', {
+        const response = await fetch(`${API_BASE_URL}/api/extract-sessions`, {
           method: 'POST',
           body: formData,
         });
@@ -88,7 +88,7 @@ const CodeExtractor = () => {
     }, 1000);
 
     // Connect WebSocket
-    const ws = new WebSocket(`${WS_BASE_URL}/ws/listen-codes');
+    const ws = new WebSocket(`${WS_BASE_URL}/ws/listen-codes`);
     wsRef.current = ws;
 
     ws.onopen = () => {
