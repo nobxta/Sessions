@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase, BackendUrl } from './supabase';
 
 // Default fallback URL
 const DEFAULT_API_BASE_URL = 'http://localhost:8000';
@@ -16,12 +16,13 @@ export async function getBackendUrl(): Promise<string> {
   if (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     try {
       // Try to get from Supabase
-      const { data, error } = await supabase
+      const result = await supabase
         .from('backend_url')
         .select('url')
         .order('updated_at', { ascending: false })
         .limit(1)
         .single();
+      const { data, error } = { data: result.data as Pick<BackendUrl, 'url'> | null, error: result.error };
 
       if (!error && data?.url) {
         cachedBackendUrl = data.url;
@@ -67,8 +68,8 @@ export async function trackUsage(feature: string, sessionCount: number = 1) {
       return; // Silently skip if Supabase not configured
     }
     
-    await supabase
-      .from('usage_stats')
+    await (supabase
+      .from('usage_stats') as any)
       .insert({
         feature,
         session_count: sessionCount,

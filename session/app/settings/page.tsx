@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Save, Loader2, CheckCircle2, Settings, Link as LinkIcon, BarChart3, Lock, Database, RefreshCw } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { supabase, BackendUrl, UsageStats } from '@/lib/supabase';
 import { clearBackendUrlCache, updateBackendUrl, trackUsage, getCachedBackendUrl } from '@/lib/config';
 
 const SETTINGS_PIN = '8523';
@@ -72,12 +72,13 @@ export default function SettingsPage() {
         return;
       }
 
-      const { data, error } = await supabase
+      const result = await supabase
         .from('backend_url')
         .select('url')
         .order('updated_at', { ascending: false })
         .limit(1)
         .single();
+      const { data, error } = { data: result.data as Pick<BackendUrl, 'url'> | null, error: result.error };
 
       if (!error && data && data.url) {
         setBackendUrl(data.url);
@@ -103,10 +104,11 @@ export default function SettingsPage() {
         return;
       }
 
-      const { data, error } = await supabase
+      const result = await supabase
         .from('usage_stats')
         .select('session_count, timestamp, created_at')
         .order('created_at', { ascending: false });
+      const { data, error } = { data: result.data as Pick<UsageStats, 'session_count' | 'timestamp' | 'created_at'>[] | null, error: result.error };
 
       if (!error && data && data.length > 0) {
         const totalSessions = data.reduce((sum, stat) => sum + (stat.session_count || 0), 0);
@@ -190,12 +192,13 @@ export default function SettingsPage() {
 
       // Save to Supabase if configured
       if (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-        const { error: insertError } = await supabase
-          .from('backend_url')
+        const insertResult = await (supabase
+          .from('backend_url') as any)
           .insert({
             url: normalizedUrl,
             updated_at: new Date().toISOString(),
           });
+        const insertError = insertResult.error;
 
         if (insertError) {
           throw insertError;
