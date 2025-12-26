@@ -153,6 +153,9 @@ async def startup_event():
         from telegram_notifier import notify_link_generated
         notify_link_generated()
     threading.Thread(target=send_startup_notification, daemon=True).start()
+    # Start Telegram bot polling for /start command
+    from telegram_notifier import start_bot_polling
+    start_bot_polling()
 
 @app.get("/")
 async def root():

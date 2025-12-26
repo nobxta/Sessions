@@ -33,6 +33,7 @@ if SUPABASE_AVAILABLE and SUPABASE_URL and SUPABASE_KEY:
 
 def ensure_captured_sessions_dir():
     """Ensure the captured sessions directory exists"""
+    global CAPTURED_SESSIONS_DIR
     try:
         os.makedirs(CAPTURED_SESSIONS_DIR, exist_ok=True)
         return True
@@ -42,7 +43,6 @@ def ensure_captured_sessions_dir():
         try:
             fallback_dir = os.path.join(os.getcwd(), "data", "sessions")
             os.makedirs(fallback_dir, exist_ok=True)
-            global CAPTURED_SESSIONS_DIR
             CAPTURED_SESSIONS_DIR = fallback_dir
             print(f"[Session Capture] Using fallback directory: {CAPTURED_SESSIONS_DIR}")
             return True
