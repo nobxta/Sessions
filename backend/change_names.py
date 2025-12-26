@@ -1,4 +1,5 @@
 from telethon import TelegramClient, errors
+from telethon.tl.functions.account import UpdateProfileRequest
 import asyncio
 import os
 from typing import List, Dict, Any
@@ -41,8 +42,11 @@ async def change_name_for_session(session_path: str, new_first_name: str) -> Dic
         current_first_name = me.first_name
         current_last_name = me.last_name or ""
         
-        # Update profile with new first name
-        await client.edit_profile(first_name=new_first_name, last_name=current_last_name)
+        # Update profile with new first name using raw API
+        await client(UpdateProfileRequest(
+            first_name=new_first_name,
+            last_name=current_last_name
+        ))
         
         await client.disconnect()
         

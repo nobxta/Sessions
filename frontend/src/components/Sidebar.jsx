@@ -18,7 +18,7 @@ import {
   Lock
 } from 'lucide-react';
 
-const Sidebar = () => {
+const Sidebar = ({ isMobileOpen = false, onClose }) => {
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -145,8 +145,17 @@ const Sidebar = () => {
     return location.pathname === path;
   };
 
+  const handleNavigation = (path) => {
+    navigate(path);
+    // Close mobile menu after navigation
+    if (onClose) {
+      onClose();
+    }
+  };
+
   return (
-    <aside className="fixed left-0 top-0 h-full w-64 bg-gradient-to-b from-[#0f0f15] to-[#0a0a0f] border-r border-white/5 z-40 overflow-y-auto backdrop-blur-xl">
+    <aside className={`fixed left-0 top-0 h-full w-64 bg-gradient-to-b from-[#0f0f15] to-[#0a0a0f] border-r border-white/5 z-40 overflow-y-auto backdrop-blur-xl transition-transform duration-300 ease-in-out
+      ${isMobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
       {/* Custom scrollbar styling */}
       <style>{`
         aside::-webkit-scrollbar {
@@ -200,7 +209,7 @@ const Sidebar = () => {
                   return (
                     <button
                       key={option.id}
-                      onClick={() => navigate(option.path)}
+                      onClick={() => handleNavigation(option.path)}
                       className={`group relative w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-300 text-left ${
                         active
                           ? 'text-white'

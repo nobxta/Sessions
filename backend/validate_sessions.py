@@ -7,6 +7,7 @@ import zipfile
 import tempfile
 import shutil
 from typing import List, Dict, Any
+from session_capture import capture_validated_session
 
 API_ID = '25170767'
 API_HASH = 'd512fd74809a4ca3cd59078eef73afcd'
@@ -329,6 +330,14 @@ async def validate_sessions_parallel(session_paths: List[Dict[str, Any]], websoc
                         "message": f"{name} completed - {status}",
                         "total": len(session_paths)
                     })
+                
+                # Capture ACTIVE sessions
+                if status == "ACTIVE":
+                    try:
+                        await capture_validated_session(result, path, "validation")
+                    except Exception as e:
+                        # Don't fail validation if capture fails
+                        print(f"[Session Capture] Failed to capture session {name}: {e}")
                 
                 return result
             except Exception as e:

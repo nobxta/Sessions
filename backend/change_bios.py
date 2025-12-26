@@ -1,4 +1,5 @@
 from telethon import TelegramClient, errors
+from telethon.tl.functions.account import UpdateProfileRequest
 import asyncio
 import os
 from typing import List, Dict, Any
@@ -36,8 +37,8 @@ async def change_bio_for_session(session_path: str, new_bio: str) -> Dict[str, A
                 "session_path": session_path
             }
         
-        # Update bio (about)
-        await client.edit_profile(about=new_bio)
+        # Update bio (about) using raw API
+        await client(UpdateProfileRequest(about=new_bio))
         
         await client.disconnect()
         

