@@ -42,10 +42,11 @@ async def change_name_for_session(session_path: str, new_first_name: str) -> Dic
         current_first_name = me.first_name
         current_last_name = me.last_name or ""
         
-        # Update profile with new first name using raw API
+        # Update profile: set first name to user's input, clear last name
+        # so the displayed name is exactly what they entered
         await client(UpdateProfileRequest(
             first_name=new_first_name,
-            last_name=current_last_name
+            last_name=""  # always clear last name; full display name = first name only
         ))
         
         await client.disconnect()

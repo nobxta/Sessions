@@ -1,7 +1,0 @@
-@import "tailwindcss";
-
-/* Custom animations */
-.animate-slide-up {
-  animation: slide-up 0.4s ease-out forwards;
-  opacity: 0;
-}

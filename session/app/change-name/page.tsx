@@ -99,8 +99,9 @@ export default function ChangeName() {
       
       const currentNames: Record<number, string> = {};
       Object.entries(data.results || {}).forEach(([index, info]: [string, any]) => {
-        if (info.success && info.first_name) {
-          currentNames[parseInt(index)] = info.first_name;
+        if (info.success) {
+          const full = [info.first_name, info.last_name].filter(Boolean).join(' ').trim();
+          currentNames[parseInt(index)] = full || info.first_name || '';
         }
       });
       setNameInputs(prev => ({ ...prev, ...currentNames }));
@@ -198,7 +199,7 @@ export default function ChangeName() {
               Change Name
             </h1>
             <p className="text-sm text-gray-400">
-              Upload session files and update display names for all accounts
+              Upload session files and update display names. The name you enter is set as first name only; any existing last name is cleared.
             </p>
           </div>
         </div>
@@ -332,7 +333,7 @@ export default function ChangeName() {
                           type="text"
                           value={nameInputs[index] || ''}
                           onChange={(e) => handleNameChange(index, e.target.value)}
-                          placeholder={hasInfo ? `Enter new name (current: ${info.first_name})` : "Enter new display name"}
+                          placeholder={hasInfo ? `Enter new name (current: ${[info.first_name, info.last_name].filter(Boolean).join(' ') || info.first_name})` : "Enter new display name (last name will be cleared)"}
                           disabled={isUpdating || isSuccess}
                           className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-white/30 disabled:opacity-50"
                         />
