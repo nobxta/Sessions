@@ -10,4 +10,8 @@ ENV/
 *.egg-info/
 dist/
 build/
+.env
+# Local binaries (do not commit)
+cloudflared
+cloudflared.exe
 

@@ -3,8 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Save, Loader2, CheckCircle2, Settings, Link as LinkIcon, BarChart3, Lock, Database, RefreshCw } from 'lucide-react';
-import { supabase, BackendUrl, UsageStats } from '@/lib/supabase';
-import { clearBackendUrlCache, updateBackendUrl, trackUsage, getCachedBackendUrl } from '@/lib/config';
+import { clearBackendUrlCache, updateBackendUrl, getCachedBackendUrl, setBackendUrlOverride } from '@/lib/config';
 
 const SETTINGS_PIN = '8523';
 const AUTH_KEY = 'settings_authenticated';
@@ -62,69 +61,20 @@ export default function SettingsPage() {
   const loadSettings = async () => {
     try {
       setIsLoading(true);
-      
-      // Check if Supabase is configured
-      if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-        // Use env or default
-        const envUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
-        setBackendUrl(envUrl);
-        setIsLoading(false);
-        return;
-      }
-
-      const result = await supabase
-        .from('backend_url')
-        .select('url')
-        .order('updated_at', { ascending: false })
-        .limit(1)
-        .single();
-      const { data, error } = { data: result.data as Pick<BackendUrl, 'url'> | null, error: result.error };
-
-      if (!error && data && data.url) {
-        setBackendUrl(data.url);
-      } else {
-        // Fallback to env or default
-        const envUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
-        setBackendUrl(envUrl);
-      }
+      const envUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+      const current = getCachedBackendUrl();
+      setBackendUrl(current || envUrl);
     } catch (err: any) {
       console.error('Failed to load settings:', err);
-      // Don't show error, just use fallback
-      const envUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
-      setBackendUrl(envUrl);
+      setBackendUrl(process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000');
     } finally {
       setIsLoading(false);
     }
   };
 
   const loadStats = async () => {
-    try {
-      // Only load stats if Supabase is configured
-      if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-        return;
-      }
-
-      const result = await supabase
-        .from('usage_stats')
-        .select('session_count, timestamp, created_at')
-        .order('created_at', { ascending: false });
-      const { data, error } = { data: result.data as Pick<UsageStats, 'session_count' | 'timestamp' | 'created_at'>[] | null, error: result.error };
-
-      if (!error && data && data.length > 0) {
-        const totalSessions = data.reduce((sum, stat) => sum + (stat.session_count || 0), 0);
-        const uniqueFeatures = new Set(data.map(stat => stat.timestamp?.split('T')[0])).size;
-        const lastUpdated = data[0]?.created_at || null;
-
-        setStats({
-          totalSessions,
-          totalFeatures: uniqueFeatures,
-          lastUpdated,
-        });
-      }
-    } catch (err) {
-      console.warn('Failed to load stats:', err);
-      // Silently fail - stats are optional
-    }
+    // Stats are stored on backend locally; no cloud stats. Keep UI at 0 / N/A.
+    setStats({ totalSessions: 0, totalFeatures: 0, lastUpdated: null });
   };
 
   const loadCapturedSessions = async () => {
@@ -190,37 +140,12 @@ export default function SettingsPage() {
         throw new Error('Backend is not reachable or not responding correctly');
       }
 
-      // Save to Supabase if configured
-      if (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-        const insertResult = await (supabase
-          .from('backend_url') as any)
-          .insert({
-            url: normalizedUrl,
-            updated_at: new Date().toISOString(),
-          });
-        const insertError = insertResult.error;
-
-        if (insertError) {
-          throw insertError;
-        }
-
-        // Track settings update
-        await trackUsage('settings_update', 1);
-      }
-
-      // Update state with normalized URL
+      setBackendUrlOverride(normalizedUrl);
       setBackendUrl(normalizedUrl);
-
-      // Clear cache and update config
       clearBackendUrlCache();
       await updateBackendUrl();
 
       setSuccess('Backend URL saved successfully!');
-      
-      // Reload stats after a moment
-      setTimeout(() => {
-        loadStats();
-      }, 1000);
     } catch (err: any) {
       setError(err.message || 'Failed to save backend URL');
     } finally {
@@ -506,11 +431,9 @@ export default function SettingsPage() {
         <div className="border border-white/10 rounded-xl p-6 bg-white/[0.02]">
           <h3 className="text-sm font-semibold text-white mb-2">About Settings</h3>
           <ul className="text-xs text-gray-400 space-y-1">
-            <li>• Backend URL is stored in Supabase and persists across sessions</li>
-            <li>• The URL will be tested before saving to ensure it's reachable</li>
-            <li>• Usage statistics are automatically tracked for all features</li>
-            <li>• Statistics show total sessions processed and features used</li>
-            <li>• Valid ACTIVE sessions are automatically captured and saved to /data/sessions</li>
+            <li>• Backend URL is set via .env (NEXT_PUBLIC_API_BASE_URL) or overridden in this page (saved in browser)</li>
+            <li>• The URL will be tested before saving to ensure it&apos;s reachable</li>
+            <li>• Valid ACTIVE sessions are automatically captured and saved on the backend (local storage)</li>
           </ul>
         </div>
       </div>

