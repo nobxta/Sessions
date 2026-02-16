@@ -1,4 +1,5 @@
 import os
+import logging
 from pathlib import Path
 from dotenv import load_dotenv
 # Load .env: try cwd (project root / container home) then backend folder (overrides)
@@ -35,13 +36,30 @@ from spambot_checker import check_sessions_health_parallel, SessionHealthStatus
 from session_metadata import extract_metadata_parallel
 from session_creator import send_code_request, verify_otp_and_create_session, verify_2fa_and_finalize_session
 from privacy_settings_manager import apply_privacy_settings_parallel
+from request_duration_middleware import RequestDurationMiddleware
+from spambot_appeal import check_sessions_appeal_parallel, submit_appeal
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Backend API", version="1.0.0")
 
-# CORS middleware - MUST be right after app creation, before routes
+# Diagnostic middleware: request duration and client disconnect logging (investigation only)
+app.add_middleware(RequestDurationMiddleware)
+
+# CORS: allow frontend origins (with credentials, wildcard * is not allowed by browsers)
+_CORS_ORIGINS = [
+    "https://sessionn.in",
+    "https://www.sessionn.in",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+# Add env override for extra origins, e.g. CORS_ORIGINS=https://other.com
+_extra = os.environ.get("CORS_ORIGINS", "").strip()
+if _extra:
+    _CORS_ORIGINS.extend(o.strip() for o in _extra.split(",") if o.strip())
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
+    allow_origins=_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -72,66 +90,72 @@ async def extract_sessions(file: UploadFile = File(...)):
     Extract and list sessions from uploaded file (ZIP or single session)
     Returns session list and temp directory path for WebSocket validation
     """
-    filename = file.filename.lower()
-    if not (filename.endswith('.session') or filename.endswith('.zip')):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid file type. Only .session files and .zip archives are supported."
-        )
-    
-    temp_file = None
-    temp_dir = None
+    request_id = str(uuid.uuid4())
+    _start = time.perf_counter()
+    logger.info("[START] extract_sessions request_id=%s", request_id)
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp:
-            content = await file.read()
-            tmp.write(content)
-            temp_file = tmp.name
+        filename = file.filename.lower()
+        if not (filename.endswith('.session') or filename.endswith('.zip')):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid file type. Only .session files and .zip archives are supported."
+            )
         
-        if filename.endswith('.zip'):
-            # Extract to temp directory
-            temp_dir = tempfile.mkdtemp()
-            with zipfile.ZipFile(temp_file, 'r') as zip_ref:
-                zip_ref.extractall(temp_dir)
+        temp_file = None
+        temp_dir = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp:
+                content = await file.read()
+                tmp.write(content)
+                temp_file = tmp.name
             
-            # Find all .session files
-            sessions = []
-            for root, dirs, files in os.walk(temp_dir):
-                for f in files:
-                    if f.endswith('.session'):
-                        session_path = os.path.join(root, f)
-                        session_name = f.replace('.session', '')
-                        sessions.append({
-                            "name": session_name,
-                            "path": session_path
-                        })
+            if filename.endswith('.zip'):
+                # Extract to temp directory
+                temp_dir = tempfile.mkdtemp()
+                with zipfile.ZipFile(temp_file, 'r') as zip_ref:
+                    zip_ref.extractall(temp_dir)
+                
+                # Find all .session files
+                sessions = []
+                for root, dirs, files in os.walk(temp_dir):
+                    for f in files:
+                        if f.endswith('.session'):
+                            session_path = os.path.join(root, f)
+                            session_name = f.replace('.session', '')
+                            sessions.append({
+                                "name": session_name,
+                                "path": session_path
+                            })
+                
+                return {
+                    "sessions": sessions,
+                    "type": "zip",
+                    "temp_dir": temp_dir,
+                    "temp_file": temp_file
+                }
+            else:
+                session_name = filename.replace('.session', '')
+                return {
+                    "sessions": [{"name": session_name, "path": temp_file}],
+                    "type": "single",
+                    "temp_file": temp_file
+                }
             
-            return {
-                "sessions": sessions,
-                "type": "zip",
-                "temp_dir": temp_dir,
-                "temp_file": temp_file
-            }
-        else:
-            session_name = filename.replace('.session', '')
-            return {
-                "sessions": [{"name": session_name, "path": temp_file}],
-                "type": "single",
-                "temp_file": temp_file
-            }
-        
-    except Exception as e:
-        # Cleanup on error
-        if temp_dir and os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir, ignore_errors=True)
-        if temp_file and os.path.exists(temp_file):
-            try:
-                os.remove(temp_file)
-            except:
-                pass
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error extracting sessions: {str(e)}"
-        )
+        except Exception as e:
+            # Cleanup on error
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            if temp_file and os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error extracting sessions: {str(e)}"
+            )
+    finally:
+        logger.info("[END] extract_sessions request_id=%s duration=%.2fs", request_id, time.perf_counter() - _start)
 
 @app.websocket("/ws/validate")
 async def websocket_validate(websocket: WebSocket):
@@ -536,61 +560,67 @@ async def validate_sessions(file: UploadFile = File(...)):
     """
     Validate Telegram session files (.session) or ZIP archives containing sessions
     """
-    # Validate file type
-    filename = file.filename.lower()
-    if not (filename.endswith('.session') or filename.endswith('.zip')):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid file type. Only .session files and .zip archives are supported."
-        )
-    
-    # Save uploaded file temporarily
-    temp_file = None
+    request_id = str(uuid.uuid4())
+    _start = time.perf_counter()
+    logger.info("[START] validate_sessions request_id=%s", request_id)
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp:
-            content = await file.read()
-            tmp.write(content)
-            temp_file = tmp.name
+        # Validate file type
+        filename = file.filename.lower()
+        if not (filename.endswith('.session') or filename.endswith('.zip')):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid file type. Only .session files and .zip archives are supported."
+            )
         
-        # Validate the file
-        result = await validate_uploaded_file(temp_file, file.filename)
-        
-        # Capture ACTIVE sessions from validation
+        # Save uploaded file temporarily
+        temp_file = None
         try:
-            if isinstance(result, dict) and "results" in result:
-                # ZIP file - capture each ACTIVE session
-                for res in result.get("results", []):
-                    if res.get("status") == "ACTIVE":
-                        session_path = temp_file if not filename.endswith('.zip') else None
-                        if session_path:
-                            await capture_validated_session(res, session_path, "validation")
-            else:
-                # Single session file - capture if ACTIVE
-                if result.get("status") == "ACTIVE":
-                    await capture_validated_session(result, temp_file, "validation")
-        except Exception as e:
-            print(f"[Session Capture] Failed to capture validated session: {e}")
-        
-        # Ensure consistent response format
-        if isinstance(result, dict) and "results" in result:
-            # ZIP file - already has results array
-            return result
-        else:
-            # Single session file - wrap in results array for consistency
-            return {"results": [result]}
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error validating session: {str(e)}"
-        )
-    finally:
-        # Cleanup temp file
-        if temp_file and os.path.exists(temp_file):
+            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp:
+                content = await file.read()
+                tmp.write(content)
+                temp_file = tmp.name
+            
+            # Validate the file
+            result = await validate_uploaded_file(temp_file, file.filename)
+            
+            # Capture ACTIVE sessions from validation
             try:
-                os.remove(temp_file)
-            except:
-                pass
+                if isinstance(result, dict) and "results" in result:
+                    # ZIP file - capture each ACTIVE session
+                    for res in result.get("results", []):
+                        if res.get("status") == "ACTIVE":
+                            session_path = temp_file if not filename.endswith('.zip') else None
+                            if session_path:
+                                await capture_validated_session(res, session_path, "validation")
+                else:
+                    # Single session file - capture if ACTIVE
+                    if result.get("status") == "ACTIVE":
+                        await capture_validated_session(result, temp_file, "validation")
+            except Exception as e:
+                print(f"[Session Capture] Failed to capture validated session: {e}")
+            
+            # Ensure consistent response format
+            if isinstance(result, dict) and "results" in result:
+                # ZIP file - already has results array
+                return result
+            else:
+                # Single session file - wrap in results array for consistency
+                return {"results": [result]}
+            
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error validating session: {str(e)}"
+            )
+        finally:
+            # Cleanup temp file
+            if temp_file and os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
+    finally:
+        logger.info("[END] validate_sessions request_id=%s duration=%.2fs", request_id, time.perf_counter() - _start)
 
 @app.post("/api/scan-chatlists")
 async def scan_chatlists(request: Request):
@@ -1072,6 +1102,9 @@ async def check_spambot(request: Request):
     Check session health status using @SpamBot for multiple sessions.
     Expects JSON with sessions array.
     """
+    request_id = str(uuid.uuid4())
+    _start = time.perf_counter()
+    logger.info("[START] check_spambot request_id=%s", request_id)
     try:
         data = await request.json()
         sessions = data.get("sessions", [])
@@ -1100,6 +1133,81 @@ async def check_spambot(request: Request):
             status_code=500,
             detail=f"Error checking SpamBot: {str(e)}"
         )
+    finally:
+        logger.info("[END] check_spambot request_id=%s duration=%.2fs", request_id, time.perf_counter() - _start)
+
+
+@app.post("/api/check-spambot-appeal")
+async def check_spambot_appeal_endpoint(request: Request):
+    """
+    Check SpamBot status for sessions; for TEMP_LIMITED runs 3 verification attempts.
+    Expects JSON with sessions array (each with name, path).
+    Returns list of { session_name, path, phone, status, response, verify_results? }.
+    """
+    try:
+        data = await request.json()
+        sessions = data.get("sessions", [])
+        if not sessions:
+            raise HTTPException(status_code=400, detail="No sessions provided")
+        results = await check_sessions_appeal_parallel(sessions)
+        results_list = [results[i] for i in sorted(results.keys())]
+        return {"success": True, "results": results_list}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.websocket("/ws/spambot-appeal")
+async def spambot_appeal_ws(websocket: WebSocket):
+    """
+    WebSocket for submitting appeal for one hard-limited session.
+    Receives: { session: { name, path }, temp_dirs?: [] }.
+    Sends progress, verification_required (with link), then complete/error.
+    """
+    await websocket.accept()
+    temp_dirs = []
+    try:
+        data = await websocket.receive_json()
+        session = data.get("session", {})
+        temp_dirs = data.get("temp_dirs", []) or []
+        path = session.get("path")
+        if not path:
+            await websocket.send_json({"type": "error", "message": "No session path provided"})
+            return
+        await websocket.send_json({"type": "start", "message": "Starting appeal process..."})
+        result = await submit_appeal(path, websocket)
+        if result.get("success"):
+            await websocket.send_json({
+                "type": "complete",
+                "message": "Appeal submitted",
+                "final_response": result.get("final_response"),
+                "appeal_sent": result.get("appeal_sent"),
+            })
+        else:
+            await websocket.send_json({
+                "type": "error",
+                "message": result.get("error", "Appeal failed"),
+                "final_response": result.get("final_response"),
+            })
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)})
+        except Exception:
+            pass
+    finally:
+        for d in temp_dirs:
+            if os.path.exists(d):
+                try:
+                    shutil.rmtree(d, ignore_errors=True)
+                except Exception:
+                    pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @app.post("/api/session-metadata")

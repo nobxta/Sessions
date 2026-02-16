@@ -13,6 +13,7 @@ import {
   Key,
   Calendar,
   Shield,
+  ShieldAlert,
   Plus,
   Info,
   LayoutGrid,
@@ -136,6 +137,12 @@ const Sidebar = ({ isMobileOpen = false, onClose }: { isMobileOpen?: boolean, on
           title: 'SpamBot Checker',
           icon: Shield,
           path: '/spambot-checker'
+        },
+        {
+          id: 'spambot-appeal',
+          title: 'SpamBot Appeal',
+          icon: ShieldAlert,
+          path: '/spambot-appeal'
         }
       ]
     },
