@@ -3,6 +3,7 @@ from telethon.tl.functions.messages import GetDialogFiltersRequest
 from telethon.tl.types import DialogFilter, DialogFilterDefault, DialogFilterChatlist
 import asyncio
 from typing import List, Dict, Any
+from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
 
 API_ID = '25170767'
 API_HASH = 'd512fd74809a4ca3cd59078eef73afcd'
@@ -25,10 +26,28 @@ async def scan_chatlists_for_session(session_path: str) -> Dict[str, Any]:
     client = TelegramClient(session_path, API_ID, API_HASH)
     
     try:
-        await client.connect()
+        r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if r is TIMEOUT_SENTINEL:
+            return {
+                "success": False,
+                "session": session_path,
+                "error": "Connection timed out",
+                "folders": [],
+                "is_premium": False
+            }
         
         # Check if authorized
-        if not await client.is_user_authorized():
+        is_auth = await run_with_timeout(client.is_user_authorized(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if is_auth is TIMEOUT_SENTINEL:
+            await client.disconnect()
+            return {
+                "success": False,
+                "session": session_path,
+                "error": "Operation timed out",
+                "folders": [],
+                "is_premium": False
+            }
+        if not is_auth:
             await client.disconnect()
             return {
                 "success": False,
@@ -39,13 +58,31 @@ async def scan_chatlists_for_session(session_path: str) -> Dict[str, Any]:
             }
         
         # Get user info to check premium status
-        me = await client.get_me()
+        me = await run_with_timeout(client.get_me(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if me is TIMEOUT_SENTINEL:
+            await client.disconnect()
+            return {
+                "success": False,
+                "session": session_path,
+                "error": "Operation timed out",
+                "folders": [],
+                "is_premium": False
+            }
         is_premium = getattr(me, 'premium', False)
         
         # Get dialog filters (chat lists/folders)
         try:
             # GetDialogFiltersRequest returns a DialogFilters object
-            dialog_filters_result = await client(GetDialogFiltersRequest())
+            dialog_filters_result = await run_with_timeout(client(GetDialogFiltersRequest()), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+            if dialog_filters_result is TIMEOUT_SENTINEL:
+                await client.disconnect()
+                return {
+                    "success": False,
+                    "session": session_path,
+                    "error": "Operation timed out",
+                    "folders": [],
+                    "is_premium": is_premium
+                }
             
             folders = []
             

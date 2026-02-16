@@ -2,6 +2,7 @@ from telethon import TelegramClient, errors
 from telethon.tl.types import Channel, Chat, User
 import asyncio
 from typing import List, Dict, Any
+from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
 
 API_ID = '25170767'
 API_HASH = 'd512fd74809a4ca3cd59078eef73afcd'
@@ -39,10 +40,26 @@ async def scan_groups_for_session(session_path: str) -> Dict[str, Any]:
     client = TelegramClient(session_path, API_ID, API_HASH)
     
     try:
-        await client.connect()
+        r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if r is TIMEOUT_SENTINEL:
+            return {
+                "success": False,
+                "session": session_path,
+                "group_count": 0,
+                "error": "Connection timed out"
+            }
         
         # Check if authorized
-        if not await client.is_user_authorized():
+        is_auth = await run_with_timeout(client.is_user_authorized(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if is_auth is TIMEOUT_SENTINEL:
+            await client.disconnect()
+            return {
+                "success": False,
+                "session": session_path,
+                "group_count": 0,
+                "error": "Operation timed out"
+            }
+        if not is_auth:
             await client.disconnect()
             return {
                 "success": False,
@@ -52,7 +69,15 @@ async def scan_groups_for_session(session_path: str) -> Dict[str, Any]:
             }
         
         # Get all dialogs
-        dialogs = await client.get_dialogs()
+        dialogs = await run_with_timeout(client.get_dialogs(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if dialogs is TIMEOUT_SENTINEL:
+            await client.disconnect()
+            return {
+                "success": False,
+                "session": session_path,
+                "group_count": 0,
+                "error": "Operation timed out"
+            }
         
         # Count groups and supergroups
         group_count = 0

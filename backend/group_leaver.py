@@ -5,6 +5,7 @@ from telethon.tl.functions.messages import DeleteChatUserRequest
 import asyncio
 import random
 from typing import List, Dict, Any, Optional
+from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
 
 API_ID = '25170767'
 API_HASH = 'd512fd74809a4ca3cd59078eef73afcd'
@@ -48,13 +49,19 @@ async def leave_groups_for_session(
     }
     
     try:
-        await client.connect()
+        r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if r is TIMEOUT_SENTINEL:
+            result["status"] = "failed"
+            result["error"] = "CONNECTION_TIMEOUT"
+            result["errors"].append("Connection timed out")
+            return result
         
-        if not await client.is_user_authorized():
+        is_auth = await run_with_timeout(client.is_user_authorized(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if is_auth is TIMEOUT_SENTINEL or not is_auth:
             await client.disconnect()
             result["status"] = "failed"
-            result["error"] = "UNAUTHORIZED"
-            result["errors"].append("Session is not authorized")
+            result["error"] = "UNAUTHORIZED" if is_auth is not TIMEOUT_SENTINEL else "OPERATION_TIMEOUT"
+            result["errors"].append("Session is not authorized" if is_auth is not TIMEOUT_SENTINEL else "Operation timed out")
             return result
         
         total_groups = len(groups)
@@ -83,20 +90,32 @@ async def leave_groups_for_session(
                 if access_hash is not None:
                     # Supergroup (Channel)
                     peer = InputPeerChannel(channel_id=group_id, access_hash=access_hash)
-                    await client(LeaveChannelRequest(channel=peer))
+                    leave_r = await run_with_timeout(client(LeaveChannelRequest(channel=peer)), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+                    if leave_r is TIMEOUT_SENTINEL:
+                        result["errors"].append(f"Operation timed out for {group_title}")
+                        result["failed"] += 1
+                        continue
                 else:
                     # Legacy group (Chat) - need to use DeleteChatUserRequest
-                    me = await client.get_me()
+                    me = await run_with_timeout(client.get_me(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+                    if me is TIMEOUT_SENTINEL:
+                        result["errors"].append(f"Operation timed out for {group_title}")
+                        result["failed"] += 1
+                        continue
                     input_user = await client.get_input_entity(me)
                     # Convert to InputUser if needed
                     if hasattr(input_user, 'user_id'):
                         input_user_obj = InputUser(user_id=input_user.user_id, access_hash=input_user.access_hash)
                     else:
                         input_user_obj = input_user
-                    await client(DeleteChatUserRequest(
+                    del_r = await run_with_timeout(client(DeleteChatUserRequest(
                         chat_id=group_id,
                         user_id=input_user_obj
-                    ))
+                    )), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+                    if del_r is TIMEOUT_SENTINEL:
+                        result["errors"].append(f"Operation timed out for {group_title}")
+                        result["failed"] += 1
+                        continue
                 
                 result["left"] += 1
                 

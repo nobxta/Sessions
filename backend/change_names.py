@@ -3,6 +3,7 @@ from telethon.tl.functions.account import UpdateProfileRequest
 import asyncio
 import os
 from typing import List, Dict, Any
+from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
 
 API_ID = '25170767'
 API_HASH = 'd512fd74809a4ca3cd59078eef73afcd'
@@ -26,10 +27,24 @@ async def change_name_for_session(session_path: str, new_first_name: str) -> Dic
     client = TelegramClient(session_path, API_ID, API_HASH)
     
     try:
-        await client.connect()
+        r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if r is TIMEOUT_SENTINEL:
+            return {
+                "success": False,
+                "error": "Connection timed out",
+                "session_path": session_path
+            }
         
         # Check if authorized
-        if not await client.is_user_authorized():
+        is_auth = await run_with_timeout(client.is_user_authorized(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if is_auth is TIMEOUT_SENTINEL:
+            await client.disconnect()
+            return {
+                "success": False,
+                "error": "Operation timed out",
+                "session_path": session_path
+            }
+        if not is_auth:
             await client.disconnect()
             return {
                 "success": False,
@@ -38,16 +53,35 @@ async def change_name_for_session(session_path: str, new_first_name: str) -> Dic
             }
         
         # Get current user info
-        me = await client.get_me()
+        me = await run_with_timeout(client.get_me(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if me is TIMEOUT_SENTINEL:
+            await client.disconnect()
+            return {
+                "success": False,
+                "error": "Operation timed out",
+                "session_path": session_path
+            }
         current_first_name = me.first_name
         current_last_name = me.last_name or ""
         
         # Update profile: set first name to user's input, clear last name
         # so the displayed name is exactly what they entered
-        await client(UpdateProfileRequest(
-            first_name=new_first_name,
-            last_name=""  # always clear last name; full display name = first name only
-        ))
+        update_result = await run_with_timeout(
+            client(UpdateProfileRequest(
+                first_name=new_first_name,
+                last_name=""  # always clear last name; full display name = first name only
+            )),
+            API_TIMEOUT,
+            default=TIMEOUT_SENTINEL,
+            session_path=session_path
+        )
+        if update_result is TIMEOUT_SENTINEL:
+            await client.disconnect()
+            return {
+                "success": False,
+                "error": "Operation timed out",
+                "session_path": session_path
+            }
         
         await client.disconnect()
         

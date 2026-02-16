@@ -1,6 +1,7 @@
 from telethon import TelegramClient, events, errors
 from telethon.tl.types import User, Channel
 import asyncio
+from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
 import re
 from datetime import datetime
 from typing import Dict, Any, Optional, Callable
@@ -57,13 +58,14 @@ async def start_listening(
     seen_codes = set()
     
     try:
-        await client.connect()
+        r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if r is TIMEOUT_SENTINEL:
+            await send_message({"type": "error", "message": "Connection timed out"})
+            return
         
-        if not await client.is_user_authorized():
-            await send_message({
-                "type": "error",
-                "message": "Session is not authorized"
-            })
+        is_auth = await run_with_timeout(client.is_user_authorized(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if is_auth is TIMEOUT_SENTINEL or not is_auth:
+            await send_message({"type": "error", "message": "Operation timed out" if is_auth is TIMEOUT_SENTINEL else "Session is not authorized"})
             await client.disconnect()
             return
         

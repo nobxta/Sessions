@@ -5,6 +5,7 @@ import os
 import base64
 import tempfile
 from typing import List, Dict, Any
+from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
 
 API_ID = '25170767'
 API_HASH = 'd512fd74809a4ca3cd59078eef73afcd'
@@ -38,10 +39,30 @@ async def change_profile_picture_for_session(session_path: str, image_path: str,
                 "current": index
             })
         
-        await client.connect()
+        r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if r is TIMEOUT_SENTINEL:
+            result = {
+                "success": False,
+                "error": "Connection timed out",
+                "session_path": session_path
+            }
+            if websocket:
+                await websocket.send_json({"type": "result", "index": index, "result": result})
+            return result
         
         # Check if authorized
-        if not await client.is_user_authorized():
+        is_auth = await run_with_timeout(client.is_user_authorized(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if is_auth is TIMEOUT_SENTINEL:
+            await client.disconnect()
+            result = {
+                "success": False,
+                "error": "Operation timed out",
+                "session_path": session_path
+            }
+            if websocket:
+                await websocket.send_json({"type": "result", "index": index, "result": result})
+            return result
+        if not is_auth:
             await client.disconnect()
             result = {
                 "success": False,
@@ -49,21 +70,40 @@ async def change_profile_picture_for_session(session_path: str, image_path: str,
                 "session_path": session_path
             }
             if websocket:
-                await websocket.send_json({
-                    "type": "result",
-                    "index": index,
-                    "result": result
-                })
+                await websocket.send_json({"type": "result", "index": index, "result": result})
             return result
         
         # Upload and set profile picture
         # Step 1: Upload the photo file to Telegram servers
-        uploaded_file = await client.upload_file(image_path)
+        uploaded_file = await run_with_timeout(client.upload_file(image_path), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if uploaded_file is TIMEOUT_SENTINEL:
+            await client.disconnect()
+            result = {
+                "success": False,
+                "error": "Operation timed out",
+                "session_path": session_path
+            }
+            if websocket:
+                await websocket.send_json({"type": "result", "index": index, "result": result})
+            return result
         
         # Step 2: Set it as profile photo using UploadProfilePhotoRequest
-        await client(UploadProfilePhotoRequest(
-            file=uploaded_file
-        ))
+        update_result = await run_with_timeout(
+            client(UploadProfilePhotoRequest(file=uploaded_file)),
+            API_TIMEOUT,
+            default=TIMEOUT_SENTINEL,
+            session_path=session_path
+        )
+        if update_result is TIMEOUT_SENTINEL:
+            await client.disconnect()
+            result = {
+                "success": False,
+                "error": "Operation timed out",
+                "session_path": session_path
+            }
+            if websocket:
+                await websocket.send_json({"type": "result", "index": index, "result": result})
+            return result
         
         await client.disconnect()
         

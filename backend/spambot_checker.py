@@ -2,6 +2,7 @@ from telethon import TelegramClient, errors, events
 import asyncio
 import re
 from typing import Dict, Any, Tuple, Optional
+from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
 
 API_ID = '25170767'
 API_HASH = 'd512fd74809a4ca3cd59078eef73afcd'
@@ -54,9 +55,19 @@ async def check_session_health_spambot(
     client = TelegramClient(session_path, api_id, api_hash)
     
     try:
-        await client.start()
+        r = await run_with_timeout(client.start(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if r is TIMEOUT_SENTINEL:
+            try:
+                await client.disconnect()
+            except:
+                pass
+            return (SessionHealthStatus.FAILED, "Connection timed out")
         
-        if not await client.is_user_authorized():
+        is_auth = await run_with_timeout(client.is_user_authorized(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if is_auth is TIMEOUT_SENTINEL:
+            await client.disconnect()
+            return (SessionHealthStatus.FAILED, "Operation timed out")
+        if not is_auth:
             await client.disconnect()
             return (SessionHealthStatus.FAILED, "Session is not authorized")
         
@@ -66,18 +77,22 @@ async def check_session_health_spambot(
         
         for username in possible_usernames:
             try:
-                bot_entity = await client.get_entity(username)
-                break
+                bot_entity = await run_with_timeout(client.get_entity(username), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+                if bot_entity is not TIMEOUT_SENTINEL:
+                    break
             except:
                 continue
         
-        if not bot_entity:
+        if not bot_entity or bot_entity is TIMEOUT_SENTINEL:
             await client.disconnect()
             return (SessionHealthStatus.FAILED, f"Could not find @spambot (tried: {', '.join(possible_usernames)})")
         
         # Send /start command
         try:
-            await client.send_message(bot_entity, '/start')
+            send_r = await run_with_timeout(client.send_message(bot_entity, '/start'), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+            if send_r is TIMEOUT_SENTINEL:
+                await client.disconnect()
+                return (SessionHealthStatus.FAILED, "Send /start timed out")
         except Exception as e:
             await client.disconnect()
             return (SessionHealthStatus.FAILED, f"Failed to send /start: {str(e)}")
@@ -102,15 +117,20 @@ async def check_session_health_spambot(
         
         # If event handler didn't catch it, try reading messages directly
         if not bot_message:
-            try:
+            async def _read_bot_messages():
+                out = None
                 async for message in client.iter_messages(bot_entity, limit=5):
                     if message.from_id and hasattr(message.from_id, 'user_id'):
                         if message.from_id.user_id == bot_entity.id:
                             msg_text = message.message or ""
                             if msg_text:
-                                bot_message = msg_text
-                                break
-            except Exception as e:
+                                return msg_text
+                return out
+            try:
+                bot_message = await run_with_timeout(_read_bot_messages(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+                if bot_message is TIMEOUT_SENTINEL:
+                    bot_message = None
+            except Exception:
                 pass
         
         await client.disconnect()

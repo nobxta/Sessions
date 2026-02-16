@@ -1,4 +1,5 @@
 from telethon import TelegramClient, errors
+from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
 from telethon.tl.functions.account import GetPasswordRequest
 import asyncio
 from typing import Dict, Any, List
@@ -64,16 +65,24 @@ async def extract_session_metadata(
     }
     
     try:
-        await client.connect()
+        r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if r is TIMEOUT_SENTINEL:
+            result["error"] = "Connection timed out"
+            return result
         
         # Check if authorized
-        if not await client.is_user_authorized():
+        is_auth = await run_with_timeout(client.is_user_authorized(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if is_auth is TIMEOUT_SENTINEL or not is_auth:
             await client.disconnect()
-            result["error"] = "Session is not authorized"
+            result["error"] = "Session is not authorized" if is_auth is not TIMEOUT_SENTINEL else "Operation timed out"
             return result
         
         # Get user info
-        me = await client.get_me()
+        me = await run_with_timeout(client.get_me(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if me is TIMEOUT_SENTINEL:
+            await client.disconnect()
+            result["error"] = "Operation timed out"
+            return result
         
         # Extract basic info
         result["phone_number"] = me.phone or "Not set"

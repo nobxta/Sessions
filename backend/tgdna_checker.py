@@ -2,6 +2,7 @@ from telethon import TelegramClient, events, errors
 import asyncio
 import re
 from typing import Dict, Any
+from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
 
 API_ID = '25170767'
 API_HASH = 'd512fd74809a4ca3cd59078eef73afcd'
@@ -50,15 +51,27 @@ async def check_session_age_tgdna(
     }
     
     try:
-        await client.start()
+        r = await run_with_timeout(client.start(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if r is TIMEOUT_SENTINEL:
+            try:
+                await client.disconnect()
+            except:
+                pass
+            result["error"] = "Connection timed out"
+            return result
         
-        if not await client.is_user_authorized():
+        is_auth = await run_with_timeout(client.is_user_authorized(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if is_auth is TIMEOUT_SENTINEL or not is_auth:
             await client.disconnect()
-            result["error"] = "Session is not authorized"
+            result["error"] = "Session is not authorized" if is_auth is not TIMEOUT_SENTINEL else "Operation timed out"
             return result
         
         # Get current user info
-        me = await client.get_me()
+        me = await run_with_timeout(client.get_me(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if me is TIMEOUT_SENTINEL:
+            await client.disconnect()
+            result["error"] = "Operation timed out"
+            return result
         user_id = me.id
         
         # Open chat with TGDNAbot (try multiple possible usernames)
@@ -67,19 +80,24 @@ async def check_session_age_tgdna(
         
         for username in possible_usernames:
             try:
-                bot_entity = await client.get_entity(username)
-                break
+                bot_entity = await run_with_timeout(client.get_entity(username), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+                if bot_entity is not TIMEOUT_SENTINEL:
+                    break
             except:
                 continue
         
-        if not bot_entity:
+        if not bot_entity or bot_entity is TIMEOUT_SENTINEL:
             await client.disconnect()
             result["error"] = f"Could not find @TGDNAbot (tried: {', '.join(possible_usernames)})"
             return result
         
         # Send /start command
         try:
-            await client.send_message(bot_entity, '/start')
+            send_r = await run_with_timeout(client.send_message(bot_entity, '/start'), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+            if send_r is TIMEOUT_SENTINEL:
+                await client.disconnect()
+                result["error"] = "Operation timed out"
+                return result
         except Exception as e:
             await client.disconnect()
             result["error"] = f"Failed to send /start: {str(e)}"
@@ -90,7 +108,11 @@ async def check_session_age_tgdna(
         
         # Send user ID and record the time
         try:
-            user_id_message = await client.send_message(bot_entity, str(user_id))
+            user_id_message = await run_with_timeout(client.send_message(bot_entity, str(user_id)), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+            if user_id_message is TIMEOUT_SENTINEL:
+                await client.disconnect()
+                result["error"] = "Operation timed out"
+                return result
             user_id_sent_time = user_id_message.date if hasattr(user_id_message, 'date') else None
         except Exception as e:
             await client.disconnect()
@@ -122,14 +144,22 @@ async def check_session_age_tgdna(
         
         # If event handler didn't catch it, try reading messages directly
         if not bot_messages:
-            try:
+            async def _read_tgdna_messages():
+                out = []
                 async for message in client.iter_messages(bot_entity, limit=10):
                     if message.from_id and hasattr(message.from_id, 'user_id'):
                         if message.from_id.user_id == bot_entity.id:
                             msg_text = message.message or ""
                             if msg_text:
-                                bot_messages.append(msg_text)
-            except Exception as e:
+                                out.append(msg_text)
+                return out
+            try:
+                bot_messages = await run_with_timeout(_read_tgdna_messages(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+                if bot_messages is TIMEOUT_SENTINEL:
+                    bot_messages = []
+                else:
+                    bot_messages = bot_messages or []
+            except Exception:
                 pass
         
         # Look for the detailed response (skip greeting messages)

@@ -1,4 +1,5 @@
 from telethon import TelegramClient, errors
+from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
 from telethon.tl.functions.account import SetPrivacyRequest
 from telethon.tl.types import (
     InputPrivacyKeyStatusTimestamp,
@@ -58,14 +59,21 @@ async def apply_privacy_settings_for_session(
     client = TelegramClient(session_path, API_ID, API_HASH)
     
     try:
-        await client.connect()
+        r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if r is TIMEOUT_SENTINEL:
+            return {
+                "success": False,
+                "error": "Connection timed out",
+                "session_path": session_path
+            }
         
         # Check if authorized
-        if not await client.is_user_authorized():
+        is_auth = await run_with_timeout(client.is_user_authorized(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if is_auth is TIMEOUT_SENTINEL or not is_auth:
             await client.disconnect()
             return {
                 "success": False,
-                "error": "Session is not authorized",
+                "error": "Session is not authorized" if is_auth is not TIMEOUT_SENTINEL else "Operation timed out",
                 "session_path": session_path
             }
         

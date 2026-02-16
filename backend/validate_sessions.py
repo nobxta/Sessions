@@ -8,6 +8,7 @@ import tempfile
 import shutil
 from typing import List, Dict, Any
 from session_capture import capture_validated_session
+from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
 
 API_ID = '25170767'
 API_HASH = 'd512fd74809a4ca3cd59078eef73afcd'
@@ -36,10 +37,27 @@ async def check_session_status(session_path: str) -> tuple[str, Dict[str, Any]]:
     client = TelegramClient(session_path, API_ID, API_HASH)
     
     try:
-        await client.connect()
+        r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if r is TIMEOUT_SENTINEL:
+            return SessionStatus.UNAUTHORIZED, {
+                "status": SessionStatus.UNAUTHORIZED,
+                "logged_in": False,
+                "can_send": False,
+                "can_read": False,
+                "message": "Connection timed out"
+            }
         
         # STEP 1: Check if the session is authorized (logged in)
-        is_authorized = await client.is_user_authorized()
+        is_authorized = await run_with_timeout(client.is_user_authorized(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if is_authorized is TIMEOUT_SENTINEL:
+            await client.disconnect()
+            return SessionStatus.UNAUTHORIZED, {
+                "status": SessionStatus.UNAUTHORIZED,
+                "logged_in": False,
+                "can_send": False,
+                "can_read": False,
+                "message": "Operation timed out"
+            }
         
         if not is_authorized:
             await client.disconnect()
@@ -53,7 +71,16 @@ async def check_session_status(session_path: str) -> tuple[str, Dict[str, Any]]:
         
         # STEP 2: Get user information
         try:
-            me = await client.get_me()
+            me = await run_with_timeout(client.get_me(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+            if me is TIMEOUT_SENTINEL:
+                await client.disconnect()
+                return SessionStatus.UNAUTHORIZED, {
+                    "status": SessionStatus.UNAUTHORIZED,
+                    "logged_in": False,
+                    "can_send": False,
+                    "can_read": False,
+                    "message": "Operation timed out"
+                }
             user_info = {
                 "user_id": me.id,
                 "username": me.username,
@@ -73,8 +100,8 @@ async def check_session_status(session_path: str) -> tuple[str, Dict[str, Any]]:
         # STEP 3: Test READ capability
         can_read = False
         try:
-            dialogs = await client.get_dialogs(limit=5)
-            can_read = True
+            dialogs = await run_with_timeout(client.get_dialogs(limit=5), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+            can_read = dialogs is not TIMEOUT_SENTINEL
         except Exception:
             can_read = False
         
@@ -84,14 +111,17 @@ async def check_session_status(session_path: str) -> tuple[str, Dict[str, Any]]:
         
         try:
             # Try to send a message to Saved Messages (self)
-            test_message = await client.send_message('me', '🔍 Test')
-            can_send = True
+            test_message = await run_with_timeout(client.send_message('me', '🔍 Test'), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+            if test_message is TIMEOUT_SENTINEL:
+                can_send = False
+            else:
+                can_send = True
             
-            # Clean up test message
-            try:
-                await client.delete_messages('me', test_message.id)
-            except:
-                pass
+                # Clean up test message
+                try:
+                    await client.delete_messages('me', test_message.id)
+                except:
+                    pass
                 
         except errors.UserDeactivatedError:
             freeze_error = "UserDeactivatedError"

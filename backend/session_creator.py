@@ -1,4 +1,5 @@
 from telethon import TelegramClient, errors
+from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
 from telethon.sessions import StringSession
 import asyncio
 import os
@@ -47,10 +48,25 @@ async def send_code_request(phone_number: str, old_session_path: Optional[str] =
     client = TelegramClient(session_path, API_ID, API_HASH)
     
     try:
-        await client.connect()
+        r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if r is TIMEOUT_SENTINEL:
+            try:
+                await client.disconnect()
+            except:
+                pass
+            return {
+                "success": False,
+                "error": "Connection timed out"
+            }
         
         # Send code request - OTP will be received on Telegram
-        sent_code = await client.send_code_request(phone_number)
+        sent_code = await run_with_timeout(client.send_code_request(phone_number), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if sent_code is TIMEOUT_SENTINEL:
+            await client.disconnect()
+            return {
+                "success": False,
+                "error": "Operation timed out"
+            }
         
         # IMPORTANT: Keep the session file - it's needed for verification
         # Don't disconnect or delete - the session must persist
@@ -174,12 +190,23 @@ async def verify_otp_and_create_session(
     client = TelegramClient(session_path, API_ID, API_HASH)
     
     try:
-        await client.connect()
+        r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if r is TIMEOUT_SENTINEL:
+            return {
+                "success": False,
+                "error": "Connection timed out"
+            }
         
         # Sign in with OTP code
         # Note: The session file must exist and match the one from send_code_request
         try:
-            result = await client.sign_in(phone_number, otp_code, phone_code_hash=phone_code_hash)
+            result = await run_with_timeout(client.sign_in(phone_number, otp_code, phone_code_hash=phone_code_hash), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+            if result is TIMEOUT_SENTINEL:
+                await client.disconnect()
+                return {
+                    "success": False,
+                    "error": "Operation timed out"
+                }
             # If sign_in returns a user object, we're logged in
             if result:
                 pass  # Success, continue below
@@ -311,12 +338,23 @@ async def verify_2fa_and_finalize_session(
     client = TelegramClient(session_path, API_ID, API_HASH)
     
     try:
-        await client.connect()
+        r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if r is TIMEOUT_SENTINEL:
+            return {
+                "success": False,
+                "error": "Connection timed out"
+            }
         
         # Sign in with 2FA password directly
         # No need to get password hint - Telethon handles this internally
         try:
-            await client.sign_in(password=password_2fa)
+            sign_r = await run_with_timeout(client.sign_in(password=password_2fa), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+            if sign_r is TIMEOUT_SENTINEL:
+                await client.disconnect()
+                return {
+                    "success": False,
+                    "error": "Operation timed out"
+                }
         except errors.PasswordHashInvalidError:
             await client.disconnect()
             try:
@@ -336,10 +374,11 @@ async def verify_2fa_and_finalize_session(
         phone_number = ""
         try:
             temp_client = TelegramClient(session_path, API_ID, API_HASH)
-            await temp_client.connect()
-            if await temp_client.is_user_authorized():
-                me = await temp_client.get_me()
-                phone_number = me.phone or ""
+            tc_r = await run_with_timeout(temp_client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+            if tc_r is not TIMEOUT_SENTINEL and await temp_client.is_user_authorized():
+                me = await run_with_timeout(temp_client.get_me(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+                if me is not TIMEOUT_SENTINEL:
+                    phone_number = me.phone or ""
             await temp_client.disconnect()
         except:
             pass

@@ -41,6 +41,9 @@ from spambot_appeal import check_sessions_appeal_parallel, submit_appeal
 
 logger = logging.getLogger(__name__)
 
+# Ensure [FLOW] and other info logs appear in backend console (upload -> operations -> output)
+logging.getLogger().setLevel(logging.INFO)
+
 app = FastAPI(title="Backend API", version="1.0.0")
 
 # Diagnostic middleware: request duration and client disconnect logging (investigation only)
@@ -127,6 +130,7 @@ async def extract_sessions(file: UploadFile = File(...)):
                                 "path": session_path
                             })
                 
+                logger.info("[FLOW] extract_sessions upload=zip sessions=%s", len(sessions))
                 return {
                     "sessions": sessions,
                     "type": "zip",
@@ -135,6 +139,7 @@ async def extract_sessions(file: UploadFile = File(...)):
                 }
             else:
                 session_name = filename.replace('.session', '')
+                logger.info("[FLOW] extract_sessions upload=single session=%s", session_name)
                 return {
                     "sessions": [{"name": session_name, "path": temp_file}],
                     "type": "single",
@@ -196,6 +201,7 @@ async def websocket_validate(websocket: WebSocket):
             pass
         # #endregion
         
+        logger.info("[FLOW] validate ws/validate sessions=%s", len(session_paths))
         if not session_paths:
             # #region agent log
             try:
@@ -238,17 +244,12 @@ async def websocket_validate(websocket: WebSocket):
         except:
             pass
         # #endregion
-        await validate_sessions_parallel(session_paths, websocket, temp_dirs)
-        
-        # #region agent log
-        try:
-            import json, time
-            log_path = r'c:\Users\NCS\Desktop\session under dev\.cursor\debug.log'
-            with open(log_path, 'a', encoding='utf-8') as f:
-                f.write(json.dumps({"location":"main.py:131","message":"Validation completed, sending complete message","data":{},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"B"}) + '\n')
-        except:
-            pass
-        # #endregion
+        results = await validate_sessions_parallel(session_paths, websocket, temp_dirs)
+        active = sum(1 for r in (results or []) if isinstance(r, dict) and r.get("status") == "ACTIVE")
+        frozen = sum(1 for r in (results or []) if isinstance(r, dict) and r.get("status") == "FROZEN")
+        unauth = sum(1 for r in (results or []) if isinstance(r, dict) and r.get("status") == "UNAUTHORIZED")
+        err = sum(1 for r in (results or []) if isinstance(r, dict) and r.get("status") == "ERROR")
+        logger.info("[FLOW] validate done total=%s active=%s frozen=%s unauthorized=%s error=%s", len(session_paths), active, frozen, unauth, err)
         await websocket.send_json({
             "type": "complete",
             "message": "All sessions validated"
@@ -293,7 +294,7 @@ async def download_sessions(request: Request):
         sessions = data.get("sessions", [])
         status = data.get("status", "")
         extraction_data = data.get("extraction_data", [])
-        
+        logger.info("[FLOW] download_sessions requested sessions=%s status_filter=%s", len(sessions), status or "any")
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions to download")
         
@@ -334,11 +335,11 @@ async def download_sessions(request: Request):
                     zip_file.write(session_path, f"{session_name}.session")
         
         zip_buffer.seek(0)
-        
+        zip_size = len(zip_buffer.getvalue())
         # Generate a unique download identifier
         download_id = str(uuid.uuid4())[:8]
         filename = f"{status.lower()}_sessions_{download_id}.zip"
-        
+        logger.info("[FLOW] download_sessions output zip=%s size_bytes=%s", filename, zip_size)
         return StreamingResponse(
             io.BytesIO(zip_buffer.read()),
             media_type="application/zip",
@@ -361,13 +362,14 @@ async def get_user_info_endpoint(request: Request):
     try:
         data = await request.json()
         sessions = data.get("sessions", [])
-        
+        logger.info("[FLOW] get_user_info sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
         
         # Get user info in parallel
         results = await get_user_info_parallel(sessions)
-        
+        success_count = sum(1 for r in (results.values() or []) if isinstance(r, dict) and r.get("success"))
+        logger.info("[FLOW] get_user_info done success=%s total=%s", success_count, len(sessions))
         return {"results": results}
         
     except HTTPException:
@@ -386,13 +388,14 @@ async def change_usernames(request: Request):
     try:
         data = await request.json()
         sessions = data.get("sessions", [])
-        
+        logger.info("[FLOW] change_usernames sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
         
         # Change usernames in parallel
         results = await change_usernames_parallel(sessions)
-        
+        success_count = sum(1 for r in (results.values() or []) if isinstance(r, dict) and r.get("success"))
+        logger.info("[FLOW] change_usernames done success=%s total=%s", success_count, len(sessions))
         # Capture successful sessions (results is dict {idx: result})
         for idx, result in results.items():
             if isinstance(result, dict) and result.get("success") and idx < len(sessions):
@@ -438,6 +441,7 @@ async def websocket_change_profile_pictures(websocket: WebSocket):
             })
             return
         
+        logger.info("[FLOW] change_profile_pictures ws sessions=%s", len(sessions))
         # Save image to temp file
         import base64
         image_bytes = base64.b64decode(image_data)
@@ -456,6 +460,7 @@ async def websocket_change_profile_pictures(websocket: WebSocket):
             # Change profile pictures in parallel with progress
             await change_profile_pictures_parallel(sessions, temp_image.name, websocket)
             
+            logger.info("[FLOW] change_profile_pictures done total=%s", len(sessions))
             await websocket.send_json({
                 "type": "complete",
                 "message": "All profile pictures updated"
@@ -488,13 +493,14 @@ async def change_bios(request: Request):
     try:
         data = await request.json()
         sessions = data.get("sessions", [])
-        
+        logger.info("[FLOW] change_bios sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
         
         # Change bios in parallel
         results = await change_bios_parallel(sessions)
-        
+        success_count = sum(1 for r in (results.values() or []) if isinstance(r, dict) and r.get("success"))
+        logger.info("[FLOW] change_bios done success=%s total=%s", success_count, len(sessions))
         # Capture successful sessions (results is dict {idx: result})
         for idx, result in results.items():
             if isinstance(result, dict) and result.get("success") and idx < len(sessions):
@@ -523,7 +529,7 @@ async def change_names(request: Request):
     try:
         data = await request.json()
         sessions = data.get("sessions", [])
-        
+        logger.info("[FLOW] change_names sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
         
@@ -534,7 +540,8 @@ async def change_names(request: Request):
         
         # Change names in parallel
         results = await change_names_parallel(sessions)
-        
+        success_count = sum(1 for r in (results.values() or []) if isinstance(r, dict) and r.get("success"))
+        logger.info("[FLOW] change_names done success=%s total=%s", success_count, len(sessions))
         # Capture successful sessions (results is dict {idx: result})
         for idx, result in results.items():
             if isinstance(result, dict) and result.get("success") and idx < len(sessions):
@@ -562,7 +569,7 @@ async def validate_sessions(file: UploadFile = File(...)):
     """
     request_id = str(uuid.uuid4())
     _start = time.perf_counter()
-    logger.info("[START] validate_sessions request_id=%s", request_id)
+    logger.info("[FLOW] validate_sessions POST request_id=%s filename=%s", request_id, file.filename or "")
     try:
         # Validate file type
         filename = file.filename.lower()
@@ -582,7 +589,8 @@ async def validate_sessions(file: UploadFile = File(...)):
             
             # Validate the file
             result = await validate_uploaded_file(temp_file, file.filename)
-            
+            res_count = len(result.get("results", [])) if isinstance(result, dict) and "results" in result else 1
+            logger.info("[FLOW] validate_sessions done request_id=%s results_count=%s", request_id, res_count)
             # Capture ACTIVE sessions from validation
             try:
                 if isinstance(result, dict) and "results" in result:
@@ -632,13 +640,14 @@ async def scan_chatlists(request: Request):
         data = await request.json()
         sessions = data.get("sessions", [])
         temp_dirs = data.get("temp_dirs", [])
-        
+        logger.info("[FLOW] scan_chatlists sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
         
         # Scan folders in parallel
         results = await scan_chatlists_parallel(sessions)
-        
+        success_count = sum(1 for r in (results.values() or []) if isinstance(r, dict) and r.get("success"))
+        logger.info("[FLOW] scan_chatlists done success=%s total=%s", success_count, len(sessions))
         # Convert results to list format for frontend
         scan_results = []
         for idx in sorted(results.keys()):
@@ -698,6 +707,7 @@ async def websocket_join_chatlists(websocket: WebSocket):
             await websocket.send_json({"type": "error", "message": "No sessions provided"})
             return
         
+        logger.info("[FLOW] ws/join-chatlists sessions=%s invite_links=%s", len(sessions), len(invite_links))
         # Check if we have either folders to leave or links to join
         has_folders_to_leave = any(len(folder_ids) > 0 for folder_ids in leave_config.values())
         
@@ -748,7 +758,7 @@ async def websocket_join_chatlists(websocket: WebSocket):
         results_list = []
         for idx in sorted(results.keys()):
             results_list.append(results[idx])
-        
+        logger.info("[FLOW] ws/join-chatlists done results=%s", len(results_list))
         await websocket.send_json({
             "type": "complete",
             "message": "All operations completed!",
@@ -779,13 +789,14 @@ async def scan_groups(request: Request):
     try:
         data = await request.json()
         sessions = data.get("sessions", [])
-        
+        logger.info("[FLOW] scan_groups sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
         
         # Scan groups in parallel
         results = await scan_groups_parallel(sessions)
-        
+        success_count = sum(1 for r in (results.values() or []) if isinstance(r, dict) and r.get("success"))
+        logger.info("[FLOW] scan_groups done success=%s total=%s", success_count, len(sessions))
         # Convert results to list format for frontend
         scan_results = []
         for idx in sorted(results.keys()):
@@ -835,8 +846,9 @@ async def websocket_leave_groups(websocket: WebSocket):
             await websocket.send_json({"type": "error", "message": "No groups to leave"})
             return
         
-        # Send initial progress
         total_groups = sum(len(groups) for groups in groups_by_session.values())
+        logger.info("[FLOW] ws/leave-groups sessions=%s total_groups=%s", len(sessions), total_groups)
+        # Send initial progress
         await websocket.send_json({
             "type": "start",
             "total_sessions": len(sessions),
@@ -855,7 +867,7 @@ async def websocket_leave_groups(websocket: WebSocket):
         results_list = []
         for idx in sorted(results.keys()):
             results_list.append(results[idx])
-        
+        logger.info("[FLOW] ws/leave-groups done results=%s", len(results_list))
         await websocket.send_json({
             "type": "complete",
             "message": "All operations completed!",
@@ -1069,13 +1081,14 @@ async def check_tgdna(request: Request):
     try:
         data = await request.json()
         sessions = data.get("sessions", [])
-        
+        logger.info("[FLOW] check_tgdna sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
         
         # Check sessions in parallel
         results = await check_sessions_age_parallel(sessions)
-        
+        success_count = sum(1 for r in (results.values() or []) if isinstance(r, dict) and r.get("success"))
+        logger.info("[FLOW] check_tgdna done success=%s total=%s", success_count, len(sessions))
         # Convert results to list format for frontend
         check_results = []
         for idx in sorted(results.keys()):
@@ -1104,17 +1117,17 @@ async def check_spambot(request: Request):
     """
     request_id = str(uuid.uuid4())
     _start = time.perf_counter()
-    logger.info("[START] check_spambot request_id=%s", request_id)
     try:
         data = await request.json()
         sessions = data.get("sessions", [])
-        
+        logger.info("[FLOW] check_spambot request_id=%s sessions=%s", request_id, len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
         
         # Check sessions in parallel
         results = await check_sessions_health_parallel(sessions)
-        
+        success_count = sum(1 for r in (results.values() or []) if isinstance(r, dict) and r.get("success"))
+        logger.info("[FLOW] check_spambot done request_id=%s success=%s total=%s duration=%.2fs", request_id, success_count, len(sessions), time.perf_counter() - _start)
         # Convert results to list format for frontend
         check_results = []
         for idx in sorted(results.keys()):
@@ -1147,10 +1160,12 @@ async def check_spambot_appeal_endpoint(request: Request):
     try:
         data = await request.json()
         sessions = data.get("sessions", [])
+        logger.info("[FLOW] check_spambot_appeal sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
         results = await check_sessions_appeal_parallel(sessions)
         results_list = [results[i] for i in sorted(results.keys())]
+        logger.info("[FLOW] check_spambot_appeal done results=%s", len(results_list))
         return {"success": True, "results": results_list}
     except HTTPException:
         raise
@@ -1219,13 +1234,14 @@ async def get_session_metadata(request: Request):
     try:
         data = await request.json()
         sessions = data.get("sessions", [])
-        
+        logger.info("[FLOW] session_metadata sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
         
         # Extract metadata in parallel
         results = await extract_metadata_parallel(sessions)
-        
+        success_count = sum(1 for r in (results.values() or []) if isinstance(r, dict) and r.get("success"))
+        logger.info("[FLOW] session_metadata done success=%s total=%s", success_count, len(sessions))
         # Convert results to list format for frontend
         metadata_results = []
         for idx in sorted(results.keys()):
@@ -1266,11 +1282,12 @@ async def send_otp(request: Request):
         else:
             old_session_path = None
         
+        logger.info("[FLOW] send_otp phone=%s", phone_number[:4] + "***" if len(phone_number) > 4 else "***")
         if not phone_number:
             raise HTTPException(status_code=400, detail="Phone number is required")
         
         result = await send_code_request(phone_number, old_session_path=old_session_path)
-        
+        logger.info("[FLOW] send_otp done success=%s", result.get("success"))
         if not result.get("success"):
             raise HTTPException(
                 status_code=400,
@@ -1311,6 +1328,7 @@ async def verify_otp(request: Request):
                 detail="phone_number, phone_code_hash, otp_code, and session_path are required"
             )
         
+        logger.info("[FLOW] verify_otp phone=%s", phone_number[:4] + "***" if len(phone_number) > 4 else "***")
         result = await verify_otp_and_create_session(
             phone_number=phone_number,
             phone_code_hash=phone_code_hash,
@@ -1326,6 +1344,7 @@ async def verify_otp(request: Request):
                 detail=result.get("error", "Failed to verify OTP")
             )
         
+        logger.info("[FLOW] verify_otp done success=%s needs_2fa=%s", result.get("success"), result.get("needs_2fa"))
         return result
         
     except HTTPException:
@@ -1357,13 +1376,14 @@ async def verify_2fa(request: Request):
                 detail="session_path and password_2fa are required"
             )
         
+        logger.info("[FLOW] verify_2fa session_path=%s", os.path.basename(session_path) if session_path else "?")
         result = await verify_2fa_and_finalize_session(
             session_path=session_path,
             password_2fa=password_2fa,
             custom_filename=custom_filename,
             use_random_filename=use_random_filename
         )
-        
+        logger.info("[FLOW] verify_2fa done success=%s", result.get("success"))
         if not result.get("success"):
             raise HTTPException(
                 status_code=400,
@@ -1392,7 +1412,7 @@ async def download_session(request: Request):
         data = await request.json()
         session_path = data.get("session_path", "").strip()
         filename = data.get("filename", "session")
-        
+        logger.info("[FLOW] download_session filename=%s", filename)
         if not session_path or not os.path.exists(session_path):
             raise HTTPException(
                 status_code=404,
@@ -1416,6 +1436,7 @@ async def download_session(request: Request):
             # Log but don't fail - file will be cleaned up later
             pass
         
+        logger.info("[FLOW] download_session done filename=%s size_bytes=%s", filename, len(session_content))
         # Return file as download
         return StreamingResponse(
             io.BytesIO(session_content),
@@ -1444,7 +1465,7 @@ async def apply_privacy_settings(request: Request):
     try:
         data = await request.json()
         sessions = data.get("sessions", [])
-        
+        logger.info("[FLOW] privacy_settings sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
         
@@ -1457,7 +1478,8 @@ async def apply_privacy_settings(request: Request):
         
         # Apply privacy settings in parallel
         results = await apply_privacy_settings_parallel(sessions)
-        
+        success_count = sum(1 for r in (results.values() or []) if isinstance(r, dict) and r.get("success"))
+        logger.info("[FLOW] privacy_settings done success=%s total=%s", success_count, len(sessions))
         # Capture successful sessions (results is dict {idx: result})
         for idx, result in results.items():
             if isinstance(result, dict) and result.get("success") and idx < len(sessions):

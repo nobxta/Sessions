@@ -14,9 +14,12 @@ import {
   MessageSquareWarning,
   ExternalLink,
   AlertCircle,
+  Lock,
 } from 'lucide-react';
 import FileUpload from '@/components/FileUpload';
 import { API_BASE_URL, WS_BASE_URL } from '@/lib/config';
+
+type AppealUiStatus = 'idle' | 'processing' | 'verification' | 'submitting' | 'success' | 'failed';
 
 type AppealResult = {
   session_name: string;
@@ -37,13 +40,12 @@ export default function SpamBotAppeal() {
   const [isChecking, setIsChecking] = useState(false);
   const [appealResults, setAppealResults] = useState<AppealResult[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [progressLog, setProgressLog] = useState<string[]>([]);
+  const [appealUiStatus, setAppealUiStatus] = useState<AppealUiStatus>('idle');
   const [appealModal, setAppealModal] = useState<{
     open: boolean;
     sessionIndex: number;
     session: any;
     link?: string;
-    message?: string;
   }>({ open: false, sessionIndex: -1, session: null });
   const [appealSubmitting, setAppealSubmitting] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -90,6 +92,7 @@ export default function SpamBotAppeal() {
     setIsChecking(true);
     setError(null);
     setAppealResults([]);
+    setAppealUiStatus('idle');
     try {
       const response = await fetch(`${API_BASE_URL}/api/check-spambot-appeal`, {
         method: 'POST',
@@ -120,14 +123,13 @@ export default function SpamBotAppeal() {
     const session = extractedSessions[sessionIndex];
     if (!session) return;
     setAppealSubmitting(true);
-    setProgressLog([]);
+    setError(null);
+    setAppealUiStatus('processing');
     const tempDirs = (Array.isArray(extractionData) ? extractionData : [extractionData]).flatMap(
       (d: any) => d.temp_dirs || []
     );
     const ws = new WebSocket(`${WS_BASE_URL}/ws/spambot-appeal`);
     wsRef.current = ws;
-
-    const addLog = (line: string) => setProgressLog((prev) => [...prev, line]);
 
     ws.onopen = () => {
       ws.send(JSON.stringify({ session, temp_dirs: tempDirs }));
@@ -136,22 +138,18 @@ export default function SpamBotAppeal() {
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
-        if (msg.type === 'start') {
-          addLog(msg.message || 'Starting...');
-        } else if (msg.type === 'progress') {
-          addLog(msg.message || msg.step || '');
+        if (msg.type === 'start' || msg.type === 'progress') {
+          setAppealUiStatus('processing');
         } else if (msg.type === 'verification_required') {
-          addLog('Verification required. Complete the step in the link and click Confirm.');
+          setAppealUiStatus('verification');
           setAppealModal({
             open: true,
             sessionIndex,
             session,
             link: msg.link,
-            message: msg.message,
           });
         } else if (msg.type === 'complete') {
-          addLog('Appeal submitted successfully.');
-          if (msg.final_response) addLog(`SpamBot: ${msg.final_response}`);
+          setAppealUiStatus('success');
           setAppealSubmitting(false);
           setAppealModal((m) => ({ ...m, open: false }));
           setAppealResults((prev) => {
@@ -160,7 +158,7 @@ export default function SpamBotAppeal() {
             return next;
           });
         } else if (msg.type === 'error') {
-          addLog(`Error: ${msg.message}`);
+          setAppealUiStatus('failed');
           setError(msg.message);
           setAppealSubmitting(false);
           setAppealModal((m) => ({ ...m, open: false }));
@@ -169,7 +167,7 @@ export default function SpamBotAppeal() {
     };
 
     ws.onerror = () => {
-      addLog('WebSocket error');
+      setAppealUiStatus('failed');
       setError('Connection error');
       setAppealSubmitting(false);
     };
@@ -180,10 +178,11 @@ export default function SpamBotAppeal() {
   };
 
   const handleConfirmVerification = () => {
+    setAppealUiStatus('submitting');
+    setAppealModal((m) => ({ ...m, open: false }));
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ action: 'confirm_verification' }));
     }
-    setAppealModal((m) => ({ ...m, open: false }));
   };
 
   const getStatusConfig = (status: string) => {
@@ -257,7 +256,7 @@ export default function SpamBotAppeal() {
           </div>
         )}
 
-        {error && (
+        {error && appealUiStatus !== 'failed' && (
           <div className="mb-6 p-4 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
             {error}
           </div>
@@ -284,15 +283,6 @@ export default function SpamBotAppeal() {
                     {result.phone && (
                       <div className="text-sm text-gray-400 mb-2">+{result.phone}</div>
                     )}
-                    <div className="text-sm text-gray-300 mb-3">{result.response && result.response.slice(0, 200)}{result.response && result.response.length > 200 ? '...' : ''}</div>
-                    {result.verify_results && result.verify_results.length > 0 && (
-                      <div className="mb-3 pt-3 border-t border-white/10">
-                        <div className="text-xs text-gray-400 mb-1">Verification attempts:</div>
-                        {result.verify_results.map((v, i) => (
-                          <div key={i} className="text-xs text-gray-500">Attempt {i + 1}: {v.status} – {v.response?.slice(0, 80)}...</div>
-                        ))}
-                      </div>
-                    )}
                     {canSubmitAppeal && (
                       <button
                         onClick={() => handleSubmitAppeal(idx)}
@@ -309,16 +299,33 @@ export default function SpamBotAppeal() {
           </div>
         )}
 
-        {(appealSubmitting || progressLog.length > 0) && (
-          <div className="mb-6 p-4 rounded-lg bg-white/[0.02] border border-white/10">
-            <h3 className="text-white font-medium mb-2 flex items-center gap-2">
-              {appealSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
-              Appeal progress
-            </h3>
-            <div className="max-h-40 overflow-y-auto space-y-1 text-sm text-gray-400 font-mono">
-              {progressLog.map((line, i) => (
-                <div key={i}>{line}</div>
-              ))}
+        {appealSubmitting && appealUiStatus === 'processing' && (
+          <div className="mb-6 p-4 rounded-lg bg-white/[0.02] border border-white/10 flex items-center gap-3">
+            <Loader2 className="w-5 h-5 animate-spin text-blue-400 flex-shrink-0" />
+            <span className="text-white">Processing appeal...</span>
+          </div>
+        )}
+
+        {appealSubmitting && appealUiStatus === 'submitting' && (
+          <div className="mb-6 p-4 rounded-lg bg-white/[0.02] border border-white/10 flex items-center gap-3">
+            <Loader2 className="w-5 h-5 animate-spin text-blue-400 flex-shrink-0" />
+            <span className="text-white">Submitting appeal...</span>
+          </div>
+        )}
+
+        {appealUiStatus === 'success' && !appealSubmitting && (
+          <div className="mb-6 p-4 rounded-lg bg-green-500/10 border border-green-500/30 flex items-center gap-3">
+            <CheckCircle2 className="w-5 h-5 text-green-400 flex-shrink-0" />
+            <span className="text-white">Appealed successfully!</span>
+          </div>
+        )}
+
+        {appealUiStatus === 'failed' && (
+          <div className="mb-6 p-4 rounded-lg bg-red-500/10 border border-red-500/30 flex items-start gap-3">
+            <XCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <span className="text-white font-medium">Appeal failed</span>
+              {error && <p className="text-red-300/90 text-sm mt-1">{error}</p>}
             </div>
           </div>
         )}
@@ -326,33 +333,29 @@ export default function SpamBotAppeal() {
         {appealModal.open && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
             <div className="bg-[#1a1a22] border border-white/20 rounded-xl p-6 max-w-md w-full shadow-xl">
-              <h3 className="text-lg font-semibold text-white mb-2">Complete verification</h3>
-              <p className="text-gray-400 text-sm mb-4">{appealModal.message}</p>
-              {appealModal.link && (
+              <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                <Lock className="w-5 h-5 text-blue-400" />
+                Verification required
+              </h3>
+              {appealModal.link ? (
                 <a
                   href={appealModal.link}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="mb-4 flex items-center gap-2 text-blue-400 hover:text-blue-300 break-all text-sm"
+                  className="mb-6 flex items-center gap-2 text-blue-400 hover:text-blue-300 break-all text-sm"
                 >
                   <ExternalLink className="w-4 h-4 flex-shrink-0" />
                   {appealModal.link}
                 </a>
+              ) : (
+                <p className="text-gray-400 text-sm mb-6">Open the verification link sent by SpamBot in Telegram.</p>
               )}
-              <div className="flex gap-3">
-                <button
-                  onClick={handleConfirmVerification}
-                  className="flex-1 px-4 py-2.5 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/40 rounded-lg text-white font-medium"
-                >
-                  I completed verification
-                </button>
-                <button
-                  onClick={() => setAppealModal((m) => ({ ...m, open: false }))}
-                  className="px-4 py-2.5 bg-white/10 hover:bg-white/15 border border-white/20 rounded-lg text-gray-300"
-                >
-                  Cancel
-                </button>
-              </div>
+              <button
+                onClick={handleConfirmVerification}
+                className="w-full px-4 py-2.5 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/40 rounded-lg text-white font-medium"
+              >
+                Done
+              </button>
             </div>
           </div>
         )}
