@@ -175,9 +175,92 @@ def _build_button_rows_from_message(msg: Any) -> List[List[Any]]:
 
 
 def _extract_verification_link(message_text: str, message_buttons: Any = None) -> Optional[str]:
-    """Extract verification/CAPTCHA URL from message text or buttons."""
+    """Extract verification/CAPTCHA URL from message text or buttons (legacy helper)."""
+    return _extract_verification_link_from_message_text_and_buttons(message_text, message_buttons)
+
+
+def _extract_verification_link_from_message(msg: Any) -> Optional[str]:
+    """
+    Extract verification link from SpamBot message using all available sources.
+    Tries: (1) URL button in reply_markup, (2) URL in message entities,
+    (3) regex on message text, (4) URL in button text.
+    """
+    if not msg:
+        return None
+    verification_link = None
+    spambot_text = (getattr(msg, "message", None) or getattr(msg, "text", None) or "") or ""
+
+    logger.debug("SpamBot verification message text: %s", spambot_text[:200] if spambot_text else "(empty)")
+    logger.debug("Has reply_markup: %s", getattr(msg, "reply_markup", None) is not None)
+
+    # Method 1: URL from inline/keyboard button (most common)
+    reply_markup = getattr(msg, "reply_markup", None)
+    if reply_markup and hasattr(reply_markup, "rows"):
+        rows = getattr(reply_markup, "rows", []) or []
+        if not isinstance(rows, (list, tuple)):
+            rows = [rows] if rows else []
+        logger.debug("Number of button rows: %s", len(rows))
+        for row_idx, row in enumerate(rows):
+            buttons = getattr(row, "buttons", None) or []
+            if not isinstance(buttons, (list, tuple)):
+                buttons = [buttons] if buttons else []
+            buttons = list(buttons)
+            for btn_idx, button in enumerate(buttons):
+                logger.debug("Row %s Button %s type: %s has url: %s", row_idx, btn_idx, type(button).__name__, getattr(button, "url", None))
+                if getattr(button, "url", None):
+                    verification_link = (button.url or "").strip()
+                    if verification_link:
+                        logger.debug("Found URL in button: %s", verification_link[:80])
+                        break
+            if verification_link:
+                break
+
+    # Method 2: URL from message entities (e.g. MessageEntityTextUrl)
+    if not verification_link and getattr(msg, "entities", None):
+        entities = msg.entities or []
+        logger.debug("Message has %s entities", len(entities))
+        for entity in entities:
+            if getattr(entity, "url", None):
+                verification_link = (entity.url or "").strip()
+                if verification_link:
+                    logger.debug("Found URL in entity: %s", verification_link[:80])
+                    break
+
+    # Method 3: Regex on plain text
+    if not verification_link and spambot_text:
+        urls = re.findall(r"https?://[^\s\)\]\>\"\'\`]+", spambot_text)
+        if urls:
+            for u in urls:
+                if "t.me" in u or "telegram" in u.lower() or "verify" in u.lower() or "captcha" in u.lower():
+                    verification_link = u
+                    break
+            if not verification_link and urls:
+                verification_link = urls[0]
+            if verification_link:
+                logger.debug("Found URL in text: %s", verification_link[:80])
+
+    # Method 4: URL in button text (e.g. button displays URL as text)
+    if not verification_link and reply_markup and hasattr(reply_markup, "rows"):
+        for row in getattr(reply_markup, "rows", []) or []:
+            for button in getattr(row, "buttons", []) or []:
+                button_text = (getattr(button, "text", None) or "") or ""
+                if "http" in button_text.lower():
+                    urls = re.findall(r"https?://[^\s\)\]]+", button_text)
+                    if urls:
+                        verification_link = urls[0]
+                        logger.debug("Found URL in button text: %s", verification_link[:80])
+                        break
+            if verification_link:
+                break
+
+    logger.debug("Final verification_link: %s", verification_link[:80] if verification_link else None)
+    return verification_link
+
+
+def _extract_verification_link_from_message_text_and_buttons(message_text: str, message_buttons: Any = None) -> Optional[str]:
+    """Extract verification URL from text and pre-built button rows (for callers that already have them)."""
     if message_text:
-        urls = re.findall(r"https?://[^\s\)\]\>]+", message_text)
+        urls = re.findall(r"https?://[^\s\)\]\>\"\'\`]+", message_text)
         for u in urls:
             if "t.me" in u or "telegram" in u.lower() or "verify" in u.lower() or "captcha" in u.lower():
                 return u
@@ -186,8 +269,9 @@ def _extract_verification_link(message_text: str, message_buttons: Any = None) -
     if message_buttons:
         for row in message_buttons:
             for btn in row:
-                if isinstance(btn, KeyboardButtonUrl) and btn.url:
-                    return btn.url
+                url = getattr(btn, "url", None)
+                if url:
+                    return url
     return None
 
 
@@ -329,9 +413,8 @@ async def submit_appeal(
         if not verification_msg:
             await client.disconnect()
             return {"success": False, "error": "No verification message from SpamBot (timeout)", "final_response": None}
-        reply_after_never = (verification_msg.message or "").strip()
-        button_rows = _build_button_rows_from_message(verification_msg)
-        verification_link = _extract_verification_link(reply_after_never, button_rows)
+        reply_after_never = (getattr(verification_msg, "message", None) or getattr(verification_msg, "text", None) or "").strip()
+        verification_link = _extract_verification_link_from_message(verification_msg)
         is_verification = _is_verification_request(reply_after_never) or bool(verification_link)
         if is_verification:
             await websocket.send_json({
