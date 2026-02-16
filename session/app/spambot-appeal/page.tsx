@@ -21,6 +21,12 @@ import { API_BASE_URL, WS_BASE_URL } from '@/lib/config';
 
 type AppealUiStatus = 'idle' | 'processing' | 'verification' | 'submitting' | 'success' | 'failed';
 
+function extractLinkFromText(text: string | undefined): string {
+  if (!text || typeof text !== 'string') return '';
+  const match = text.match(/https?:\/\/[^\s)\]]+/);
+  return match ? match[0] : '';
+}
+
 type AppealResult = {
   session_name: string;
   path: string;
@@ -46,6 +52,7 @@ export default function SpamBotAppeal() {
     sessionIndex: number;
     session: any;
     link?: string;
+    message?: string;
   }>({ open: false, sessionIndex: -1, session: null });
   const [appealSubmitting, setAppealSubmitting] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -146,7 +153,8 @@ export default function SpamBotAppeal() {
             open: true,
             sessionIndex,
             session,
-            link: msg.link,
+            link: msg.link || extractLinkFromText(msg.message),
+            message: msg.message,
           });
         } else if (msg.type === 'complete') {
           setAppealUiStatus('success');
@@ -333,26 +341,27 @@ export default function SpamBotAppeal() {
         {appealModal.open && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
             <div className="bg-[#1a1a22] border border-white/20 rounded-xl p-6 max-w-md w-full shadow-xl">
-              <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+              <h3 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
                 <Lock className="w-5 h-5 text-blue-400" />
                 Verification required
               </h3>
+              <p className="text-gray-400 text-sm mb-4">Please verify you are a human. Open the link below, complete the step, then click Done.</p>
               {appealModal.link ? (
                 <a
                   href={appealModal.link}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="mb-6 flex items-center gap-2 text-blue-400 hover:text-blue-300 break-all text-sm"
+                  className="mb-4 w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-500/25 hover:bg-blue-500/35 border border-blue-500/50 rounded-lg text-white font-medium"
                 >
-                  <ExternalLink className="w-4 h-4 flex-shrink-0" />
-                  {appealModal.link}
+                  <ExternalLink className="w-5 h-5 flex-shrink-0" />
+                  Open verification link
                 </a>
               ) : (
-                <p className="text-gray-400 text-sm mb-6">Open the verification link sent by SpamBot in Telegram.</p>
+                <p className="text-amber-400/90 text-sm mb-4">No link received. Check Telegram for the verification message from SpamBot and complete it there, then click Done.</p>
               )}
               <button
                 onClick={handleConfirmVerification}
-                className="w-full px-4 py-2.5 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/40 rounded-lg text-white font-medium"
+                className="w-full px-4 py-2.5 bg-white/10 hover:bg-white/15 border border-white/20 rounded-lg text-white font-medium"
               >
                 Done
               </button>
