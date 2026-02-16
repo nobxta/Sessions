@@ -3,7 +3,10 @@ import asyncio
 import re
 from typing import Dict, Any, Tuple, Optional
 from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
+from concurrency_config import MAX_CONCURRENT_SESSIONS
+import logging
 
+logger = logging.getLogger(__name__)
 API_ID = '25170767'
 API_HASH = 'd512fd74809a4ca3cd59078eef73afcd'
 SPAMBOT_USERNAME = 'spambot'
@@ -51,30 +54,34 @@ async def check_session_health_spambot(
     # Remove .session extension if present
     if session_path.endswith('.session'):
         session_path = session_path[:-8]
-    
+    logger.info("[SESSION START] %s", session_path)
     client = TelegramClient(session_path, api_id, api_hash)
     
     try:
+        logger.info("[SESSION ACTION] %s connect", session_path)
         r = await run_with_timeout(client.start(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if r is TIMEOUT_SENTINEL:
             try:
                 await client.disconnect()
             except:
                 pass
+            logger.warning("[SESSION FAIL] %s error=%s", session_path, "Connection timed out")
             return (SessionHealthStatus.FAILED, "Connection timed out")
         
         is_auth = await run_with_timeout(client.is_user_authorized(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if is_auth is TIMEOUT_SENTINEL:
             await client.disconnect()
+            logger.warning("[SESSION FAIL] %s error=%s", session_path, "Operation timed out")
             return (SessionHealthStatus.FAILED, "Operation timed out")
         if not is_auth:
             await client.disconnect()
+            logger.warning("[SESSION FAIL] %s error=%s", session_path, "Session is not authorized")
             return (SessionHealthStatus.FAILED, "Session is not authorized")
         
         # Open chat with SpamBot (try multiple possible usernames)
         bot_entity = None
         possible_usernames = ['spambot', 'SpamBot', 'Spambot']
-        
+        logger.info("[SESSION ACTION] %s get_entity", session_path)
         for username in possible_usernames:
             try:
                 bot_entity = await run_with_timeout(client.get_entity(username), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
@@ -85,16 +92,20 @@ async def check_session_health_spambot(
         
         if not bot_entity or bot_entity is TIMEOUT_SENTINEL:
             await client.disconnect()
+            logger.warning("[SESSION FAIL] %s error=%s", session_path, "Could not find @spambot")
             return (SessionHealthStatus.FAILED, f"Could not find @spambot (tried: {', '.join(possible_usernames)})")
         
         # Send /start command
+        logger.info("[SESSION ACTION] %s send_message", session_path)
         try:
             send_r = await run_with_timeout(client.send_message(bot_entity, '/start'), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
             if send_r is TIMEOUT_SENTINEL:
                 await client.disconnect()
+                logger.warning("[SESSION FAIL] %s error=%s", session_path, "Send /start timed out")
                 return (SessionHealthStatus.FAILED, "Send /start timed out")
         except Exception as e:
             await client.disconnect()
+            logger.warning("[SESSION FAIL] %s error=%s", session_path, str(e))
             return (SessionHealthStatus.FAILED, f"Failed to send /start: {str(e)}")
         
         # Use event handler to listen for new messages from the bot
@@ -136,9 +147,11 @@ async def check_session_health_spambot(
         await client.disconnect()
         
         if not bot_message:
+            logger.warning("[SESSION FAIL] %s error=%s", session_path, "No response from @spambot after timeout")
             return (SessionHealthStatus.FAILED, "No response from @spambot after timeout")
         
         # Classify the response
+        logger.info("[SESSION END] %s success", session_path)
         return classify_spambot_response(bot_message)
         
     except errors.AuthKeyUnregisteredError:
@@ -146,18 +159,21 @@ async def check_session_health_spambot(
             await client.disconnect()
         except:
             pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, "AUTH_KEY_UNREGISTERED")
         return (SessionHealthStatus.FAILED, "AUTH_KEY_UNREGISTERED")
     except errors.UserDeactivatedError:
         try:
             await client.disconnect()
         except:
             pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, "USER_DEACTIVATED")
         return (SessionHealthStatus.FAILED, "USER_DEACTIVATED")
     except Exception as e:
         try:
             await client.disconnect()
         except:
             pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, str(e))
         return (SessionHealthStatus.FAILED, f"Error: {str(e)}")
 
 
@@ -244,7 +260,11 @@ async def check_sessions_health_parallel(sessions: list) -> Dict[int, Dict[str, 
             "index": index
         }
     
-    tasks = [check_with_index(session_info, idx) for idx, session_info in enumerate(sessions)]
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_SESSIONS)
+    async def sem_task(session_info: Dict[str, Any], index: int):
+        async with semaphore:
+            return await check_with_index(session_info, index)
+    tasks = [sem_task(session_info, idx) for idx, session_info in enumerate(sessions)]
     results_list = await asyncio.gather(*tasks, return_exceptions=True)
     
     # Handle exceptions

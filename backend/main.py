@@ -37,12 +37,16 @@ from session_metadata import extract_metadata_parallel
 from session_creator import send_code_request, verify_otp_and_create_session, verify_2fa_and_finalize_session
 from privacy_settings_manager import apply_privacy_settings_parallel
 from request_duration_middleware import RequestDurationMiddleware
-from spambot_appeal import check_sessions_appeal_parallel, submit_appeal
+from spambot_appeal import check_sessions_appeal_parallel, submit_appeal, submit_appeal_frozen
+from job_manager import job_manager
+from job_executor import job_executor
+from ws_manager import ws_manager
 
-logger = logging.getLogger(__name__)
-
-# Ensure [FLOW] and other info logs appear in backend console (upload -> operations -> output)
-logging.getLogger().setLevel(logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s"
+)
+logger = logging.getLogger("backend")
 
 app = FastAPI(title="Backend API", version="1.0.0")
 
@@ -69,6 +73,12 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+async def startup():
+    job_manager.max_concurrent_jobs = 5
+    job_executor.max_concurrent_sessions = 10
+
+
 @app.get("/")
 async def root():
     return {"message": "Backend server is running!"}
@@ -93,6 +103,7 @@ async def extract_sessions(file: UploadFile = File(...)):
     Extract and list sessions from uploaded file (ZIP or single session)
     Returns session list and temp directory path for WebSocket validation
     """
+    logger.info("[API START] /api/extract-sessions")
     request_id = str(uuid.uuid4())
     _start = time.perf_counter()
     logger.info("[START] extract_sessions request_id=%s", request_id)
@@ -161,6 +172,7 @@ async def extract_sessions(file: UploadFile = File(...)):
             )
     finally:
         logger.info("[END] extract_sessions request_id=%s duration=%.2fs", request_id, time.perf_counter() - _start)
+        logger.info("[API END] /api/extract-sessions completed")
 
 @app.websocket("/ws/validate")
 async def websocket_validate(websocket: WebSocket):
@@ -175,7 +187,7 @@ async def websocket_validate(websocket: WebSocket):
         pass
     # #endregion
     await websocket.accept()
-    
+    logger.info("[API START] /ws/validate")
     try:
         # Receive session paths (already extracted on client side)
         data = await websocket.receive_json()
@@ -254,7 +266,7 @@ async def websocket_validate(websocket: WebSocket):
             "type": "complete",
             "message": "All sessions validated"
         })
-        
+        logger.info("[API END] /ws/validate completed")
     except WebSocketDisconnect:
         # #region agent log
         try:
@@ -370,6 +382,7 @@ async def get_user_info_endpoint(request: Request):
         results = await get_user_info_parallel(sessions)
         success_count = sum(1 for r in (results.values() or []) if isinstance(r, dict) and r.get("success"))
         logger.info("[FLOW] get_user_info done success=%s total=%s", success_count, len(sessions))
+        logger.info("[API END] /api/get-user-info completed")
         return {"results": results}
         
     except HTTPException:
@@ -385,9 +398,15 @@ async def change_usernames(request: Request):
     """
     Change usernames for multiple sessions in parallel
     """
+    _inv_path = "/api/change-usernames"
+    _inv_start_ts = time.time()
+    _inv_start = time.perf_counter()
+    _inv_response_sent = False
+    logger.info("[REQ_START] path=%s ts=%.3f", _inv_path, _inv_start_ts)
     try:
         data = await request.json()
         sessions = data.get("sessions", [])
+        logger.info("[API START] /api/change-usernames sessions=%d", len(sessions))
         logger.info("[FLOW] change_usernames sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
@@ -404,8 +423,10 @@ async def change_usernames(request: Request):
                     try:
                         await capture_successful_operation_session(result, session_path, "change_username")
                     except Exception as e:
-                        print(f"[Session Capture] Failed to capture session: {e}")
+                        logger.warning("[Session Capture] Failed to capture session: %s", e)
         
+        logger.info("[API END] /api/change-usernames completed")
+        _inv_response_sent = True
         return {"results": [results[i] for i in sorted(results)]}
         
     except HTTPException:
@@ -415,6 +436,8 @@ async def change_usernames(request: Request):
             status_code=500,
             detail=f"Error changing usernames: {str(e)}"
         )
+    finally:
+        logger.info("[REQ_END] path=%s duration=%.2fs response_sent=%s", _inv_path, time.perf_counter() - _inv_start, _inv_response_sent)
 
 @app.websocket("/ws/change-profile-pictures")
 async def websocket_change_profile_pictures(websocket: WebSocket):
@@ -440,7 +463,7 @@ async def websocket_change_profile_pictures(websocket: WebSocket):
                 "message": "No sessions provided"
             })
             return
-        
+        logger.info("[API START] /ws/change-profile-pictures sessions=%d", len(sessions))
         logger.info("[FLOW] change_profile_pictures ws sessions=%s", len(sessions))
         # Save image to temp file
         import base64
@@ -461,6 +484,7 @@ async def websocket_change_profile_pictures(websocket: WebSocket):
             await change_profile_pictures_parallel(sessions, temp_image.name, websocket)
             
             logger.info("[FLOW] change_profile_pictures done total=%s", len(sessions))
+            logger.info("[API END] /ws/change-profile-pictures completed")
             await websocket.send_json({
                 "type": "complete",
                 "message": "All profile pictures updated"
@@ -490,9 +514,15 @@ async def change_bios(request: Request):
     """
     Change bios for multiple sessions in parallel
     """
+    _inv_path = "/api/change-bios"
+    _inv_start_ts = time.time()
+    _inv_start = time.perf_counter()
+    _inv_response_sent = False
+    logger.info("[REQ_START] path=%s ts=%.3f", _inv_path, _inv_start_ts)
     try:
         data = await request.json()
         sessions = data.get("sessions", [])
+        logger.info("[API START] /api/change-bios sessions=%d", len(sessions))
         logger.info("[FLOW] change_bios sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
@@ -509,8 +539,10 @@ async def change_bios(request: Request):
                     try:
                         await capture_successful_operation_session(result, session_path, "change_bio")
                     except Exception as e:
-                        print(f"[Session Capture] Failed to capture session: {e}")
+                        logger.warning("[Session Capture] Failed to capture session: %s", e)
         
+        logger.info("[API END] /api/change-bios completed")
+        _inv_response_sent = True
         return {"results": [results[i] for i in sorted(results)]}
         
     except HTTPException:
@@ -520,15 +552,23 @@ async def change_bios(request: Request):
             status_code=500,
             detail=f"Error changing bios: {str(e)}"
         )
+    finally:
+        logger.info("[REQ_END] path=%s duration=%.2fs response_sent=%s", _inv_path, time.perf_counter() - _inv_start, _inv_response_sent)
 
 @app.post("/api/change-names")
 async def change_names(request: Request):
     """
     Change display names for multiple sessions in parallel
     """
+    _inv_path = "/api/change-names"
+    _inv_start_ts = time.time()
+    _inv_start = time.perf_counter()
+    _inv_response_sent = False
+    logger.info("[REQ_START] path=%s ts=%.3f", _inv_path, _inv_start_ts)
     try:
         data = await request.json()
         sessions = data.get("sessions", [])
+        logger.info("[API START] /api/change-names sessions=%d", len(sessions))
         logger.info("[FLOW] change_names sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
@@ -550,8 +590,10 @@ async def change_names(request: Request):
                     try:
                         await capture_successful_operation_session(result, session_path, "change_name")
                     except Exception as e:
-                        print(f"[Session Capture] Failed to capture session: {e}")
+                        logger.warning("[Session Capture] Failed to capture session: %s", e)
         
+        logger.info("[API END] /api/change-names completed")
+        _inv_response_sent = True
         return {"results": [results[i] for i in sorted(results)]}
         
     except HTTPException:
@@ -561,14 +603,21 @@ async def change_names(request: Request):
             status_code=500,
             detail=f"Error changing names: {str(e)}"
         )
+    finally:
+        logger.info("[REQ_END] path=%s duration=%.2fs response_sent=%s", _inv_path, time.perf_counter() - _inv_start, _inv_response_sent)
 
 @app.post("/api/validate-sessions")
 async def validate_sessions(file: UploadFile = File(...)):
     """
     Validate Telegram session files (.session) or ZIP archives containing sessions
     """
+    _inv_path = "/api/validate-sessions"
+    _inv_start_ts = time.time()
+    _inv_start = time.perf_counter()
+    _inv_response_sent = False
+    logger.info("[REQ_START] path=%s ts=%.3f", _inv_path, _inv_start_ts)
+    logger.info("[API START] /api/validate-sessions")
     request_id = str(uuid.uuid4())
-    _start = time.perf_counter()
     logger.info("[FLOW] validate_sessions POST request_id=%s filename=%s", request_id, file.filename or "")
     try:
         # Validate file type
@@ -605,14 +654,16 @@ async def validate_sessions(file: UploadFile = File(...)):
                     if result.get("status") == "ACTIVE":
                         await capture_validated_session(result, temp_file, "validation")
             except Exception as e:
-                print(f"[Session Capture] Failed to capture validated session: {e}")
+                logger.warning("[Session Capture] Failed to capture validated session: %s", e)
             
             # Ensure consistent response format
             if isinstance(result, dict) and "results" in result:
                 # ZIP file - already has results array
+                _inv_response_sent = True
                 return result
             else:
                 # Single session file - wrap in results array for consistency
+                _inv_response_sent = True
                 return {"results": [result]}
             
         except Exception as e:
@@ -628,7 +679,235 @@ async def validate_sessions(file: UploadFile = File(...)):
                 except:
                     pass
     finally:
-        logger.info("[END] validate_sessions request_id=%s duration=%.2fs", request_id, time.perf_counter() - _start)
+        logger.info("[REQ_END] path=%s duration=%.2fs response_sent=%s", _inv_path, time.perf_counter() - _inv_start, _inv_response_sent)
+        logger.info("[END] validate_sessions request_id=%s duration=%.2fs", request_id, time.perf_counter() - _inv_start)
+        logger.info("[API END] /api/validate-sessions completed")
+
+
+# ---------- V2 background job system ----------
+@app.websocket("/ws/v2/jobs/{job_id}")
+async def job_progress_stream(websocket: WebSocket, job_id: str):
+    job = job_manager.get_job(job_id)
+    if not job:
+        await websocket.close(code=1008, reason="Job not found")
+        return
+    await ws_manager.connect(websocket, job_id)
+    try:
+        status = job_manager.get_job_status(job_id)
+        await websocket.send_json({"type": "init", "data": status})
+        while True:
+            msg = await websocket.receive_text()
+            if msg == "ping":
+                await websocket.send_json({"type": "pong"})
+            elif msg == "status":
+                current = job_manager.get_job_status(job_id)
+                await websocket.send_json({"type": "status_response", "data": current})
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        await ws_manager.disconnect(websocket, job_id)
+
+
+@app.get("/api/v2/jobs/{job_id}")
+async def get_job_status(job_id: str):
+    status = job_manager.get_job_status(job_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return status
+
+
+@app.post("/api/v2/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str):
+    success = job_manager.cancel_job(job_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Cannot cancel job")
+    return {"message": "Job cancelled"}
+
+
+@app.get("/api/v2/jobs")
+async def list_jobs(limit: int = 50):
+    return {"jobs": job_manager.get_all_jobs(limit=limit)}
+
+
+# V2 background job endpoints (return job_id immediately; progress via WebSocket)
+@app.post("/api/v2/check-spambot")
+async def check_spambot_v2(request: Request):
+    from spambot_checker import check_session_health_spambot
+    data = await request.json()
+    sessions = data.get("sessions", [])
+    if not sessions:
+        raise HTTPException(status_code=400, detail="No sessions provided")
+    job_id = job_manager.create_job("spambot_check", len(sessions))
+
+    async def run_spambot_job():
+        async def process_one(session: dict, index: int):
+            path = session.get("path")
+            if not path:
+                return {"success": False, "session": "unknown", "status": SessionHealthStatus.FAILED, "details": "No session path provided", "index": index}
+            status, details = await check_session_health_spambot(path)
+            return {"success": status != SessionHealthStatus.FAILED, "session": path, "status": status, "details": details, "index": index}
+        await job_executor.execute_session_batch(job_id=job_id, sessions=sessions, process_func=process_one, session_timeout=60)
+
+    await job_manager.execute_job(job_id, run_spambot_job)
+    return {"job_id": job_id, "status": "pending", "message": f"Job created for {len(sessions)} sessions"}
+
+
+@app.post("/api/v2/check-spambot-appeal")
+async def check_spambot_appeal_v2(request: Request):
+    from spambot_appeal import check_spambot_status, get_phone_for_session
+    data = await request.json()
+    sessions = data.get("sessions", [])
+    if not sessions:
+        raise HTTPException(status_code=400, detail="No sessions provided")
+    job_id = job_manager.create_job("spambot_appeal", len(sessions))
+
+    async def run_appeal_job():
+        async def process_one(session: dict, index: int):
+            path = session.get("path") or ""
+            name = session.get("name") or f"Session {index + 1}"
+            if not path:
+                return {"session_name": name, "path": path, "phone": "", "status": "ERROR", "response": "No session path", "index": index}
+            status, response_text = await check_spambot_status(path)
+            phone = await get_phone_for_session(path)
+            return {"session_name": name, "path": path, "phone": phone, "status": status, "response": response_text, "index": index}
+        await job_executor.execute_session_batch(job_id=job_id, sessions=sessions, process_func=process_one, session_timeout=60)
+
+    await job_manager.execute_job(job_id, run_appeal_job)
+    return {"job_id": job_id, "status": "pending", "message": f"Job created for {len(sessions)} sessions"}
+
+
+@app.post("/api/v2/change-names")
+async def change_names_v2(request: Request):
+    from change_names import change_name_for_session
+    data = await request.json()
+    sessions = data.get("sessions", [])
+    if not sessions:
+        raise HTTPException(status_code=400, detail="No sessions provided")
+    for s in sessions:
+        if not s.get("new_first_name") or not str(s.get("new_first_name", "")).strip():
+            raise HTTPException(status_code=400, detail="All sessions must have a new first name")
+    job_id = job_manager.create_job("change_names", len(sessions))
+
+    async def run_change_names_job():
+        async def process_one(session: dict, index: int):
+            path = session.get("path") or session.get("name", "")
+            new_first_name = session.get("new_first_name", "")
+            result = await change_name_for_session(path, new_first_name)
+            if isinstance(result, dict) and result.get("success") and path:
+                try:
+                    await capture_successful_operation_session(result, path, "change_name")
+                except Exception as e:
+                    logger.warning("[Session Capture] Failed to capture session: %s", e)
+            return result
+        await job_executor.execute_session_batch(job_id=job_id, sessions=sessions, process_func=process_one, session_timeout=30)
+
+    await job_manager.execute_job(job_id, run_change_names_job)
+    return {"job_id": job_id, "status": "pending", "message": f"Job created for {len(sessions)} sessions"}
+
+
+@app.post("/api/v2/change-bios")
+async def change_bios_v2(request: Request):
+    from change_bios import change_bio_for_session
+    data = await request.json()
+    sessions = data.get("sessions", [])
+    if not sessions:
+        raise HTTPException(status_code=400, detail="No sessions provided")
+    job_id = job_manager.create_job("change_bios", len(sessions))
+
+    async def run_change_bios_job():
+        async def process_one(session: dict, index: int):
+            path = session.get("path") or session.get("name", "")
+            new_bio = session.get("new_bio", "")
+            result = await change_bio_for_session(path, new_bio)
+            if isinstance(result, dict) and result.get("success") and path:
+                try:
+                    await capture_successful_operation_session(result, path, "change_bio")
+                except Exception as e:
+                    logger.warning("[Session Capture] Failed to capture session: %s", e)
+            return result
+        await job_executor.execute_session_batch(job_id=job_id, sessions=sessions, process_func=process_one, session_timeout=30)
+
+    await job_manager.execute_job(job_id, run_change_bios_job)
+    return {"job_id": job_id, "status": "pending", "message": f"Job created for {len(sessions)} sessions"}
+
+
+@app.post("/api/v2/change-usernames")
+async def change_usernames_v2(request: Request):
+    from change_usernames import change_username_for_session
+    data = await request.json()
+    sessions = data.get("sessions", [])
+    if not sessions:
+        raise HTTPException(status_code=400, detail="No sessions provided")
+    job_id = job_manager.create_job("change_usernames", len(sessions))
+
+    async def run_change_usernames_job():
+        async def process_one(session: dict, index: int):
+            path = session.get("path") or session.get("name", "")
+            new_username = session.get("new_username", "")
+            result = await change_username_for_session(path, new_username)
+            if isinstance(result, dict) and result.get("success") and path:
+                try:
+                    await capture_successful_operation_session(result, path, "change_username")
+                except Exception as e:
+                    logger.warning("[Session Capture] Failed to capture session: %s", e)
+            return result
+        await job_executor.execute_session_batch(job_id=job_id, sessions=sessions, process_func=process_one, session_timeout=30)
+
+    await job_manager.execute_job(job_id, run_change_usernames_job)
+    return {"job_id": job_id, "status": "pending", "message": f"Job created for {len(sessions)} sessions"}
+
+
+@app.post("/api/v2/validate-sessions")
+async def validate_sessions_v2(file: UploadFile = File(...)):
+    from validate_sessions import check_session_status
+    filename = (file.filename or "").lower()
+    if not (filename.endswith(".session") or filename.endswith(".zip")):
+        raise HTTPException(status_code=400, detail="Invalid file type. Only .session files and .zip archives are supported.")
+    content = await file.read()
+    temp_file = None
+    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp:
+        tmp.write(content)
+        temp_file = tmp.name
+    try:
+        if filename.endswith(".zip"):
+            sessions = await extract_sessions_from_zip(temp_file)
+        else:
+            sessions = [{"name": filename.replace(".session", ""), "path": temp_file}]
+    except Exception as e:
+        if temp_file and os.path.exists(temp_file):
+            try:
+                os.remove(temp_file)
+            except Exception:
+                pass
+        raise HTTPException(status_code=500, detail=f"Error preparing file: {str(e)}")
+    job_id = job_manager.create_job("validate_sessions", len(sessions))
+
+    async def run_validate_job():
+        try:
+            async def process_one(session: dict, index: int):
+                path = session.get("path") or session.get("name", "")
+                name = session.get("name", f"Session {index + 1}")
+                status, details = await check_session_status(path)
+                result = {**details, "session_name": name}
+                if status == "ACTIVE":
+                    try:
+                        await capture_validated_session(result, path, "validation")
+                    except Exception as e:
+                        logger.warning("[Session Capture] Failed to capture session %s: %s", name, e)
+                return result
+            await job_executor.execute_session_batch(job_id=job_id, sessions=sessions, process_func=process_one, session_timeout=60)
+        finally:
+            if temp_file and os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except Exception:
+                    pass
+
+    await job_manager.execute_job(job_id, run_validate_job)
+    return {"job_id": job_id, "status": "pending", "message": f"Job created for {len(sessions)} sessions"}
+
 
 @app.post("/api/scan-chatlists")
 async def scan_chatlists(request: Request):
@@ -640,6 +919,7 @@ async def scan_chatlists(request: Request):
         data = await request.json()
         sessions = data.get("sessions", [])
         temp_dirs = data.get("temp_dirs", [])
+        logger.info("[API START] /api/scan-chatlists sessions=%d", len(sessions))
         logger.info("[FLOW] scan_chatlists sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
@@ -654,6 +934,7 @@ async def scan_chatlists(request: Request):
             result = results[idx]
             scan_results.append(result)
         
+        logger.info("[API END] /api/scan-chatlists completed")
         return {
             "success": True,
             "results": scan_results
@@ -706,7 +987,7 @@ async def websocket_join_chatlists(websocket: WebSocket):
         if not sessions:
             await websocket.send_json({"type": "error", "message": "No sessions provided"})
             return
-        
+        logger.info("[API START] /ws/join-chatlists sessions=%d", len(sessions))
         logger.info("[FLOW] ws/join-chatlists sessions=%s invite_links=%s", len(sessions), len(invite_links))
         # Check if we have either folders to leave or links to join
         has_folders_to_leave = any(len(folder_ids) > 0 for folder_ids in leave_config.values())
@@ -759,6 +1040,7 @@ async def websocket_join_chatlists(websocket: WebSocket):
         for idx in sorted(results.keys()):
             results_list.append(results[idx])
         logger.info("[FLOW] ws/join-chatlists done results=%s", len(results_list))
+        logger.info("[API END] /ws/join-chatlists completed")
         await websocket.send_json({
             "type": "complete",
             "message": "All operations completed!",
@@ -789,6 +1071,7 @@ async def scan_groups(request: Request):
     try:
         data = await request.json()
         sessions = data.get("sessions", [])
+        logger.info("[API START] /api/scan-groups sessions=%d", len(sessions))
         logger.info("[FLOW] scan_groups sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
@@ -806,6 +1089,7 @@ async def scan_groups(request: Request):
         # Calculate total groups
         total_groups = sum(r.get("group_count", 0) for r in scan_results if r.get("success"))
         
+        logger.info("[API END] /api/scan-groups completed")
         return {
             "success": True,
             "results": scan_results,
@@ -845,7 +1129,7 @@ async def websocket_leave_groups(websocket: WebSocket):
         if not groups_by_session:
             await websocket.send_json({"type": "error", "message": "No groups to leave"})
             return
-        
+        logger.info("[API START] /ws/leave-groups sessions=%d", len(sessions))
         total_groups = sum(len(groups) for groups in groups_by_session.values())
         logger.info("[FLOW] ws/leave-groups sessions=%s total_groups=%s", len(sessions), total_groups)
         # Send initial progress
@@ -868,6 +1152,7 @@ async def websocket_leave_groups(websocket: WebSocket):
         for idx in sorted(results.keys()):
             results_list.append(results[idx])
         logger.info("[FLOW] ws/leave-groups done results=%s", len(results_list))
+        logger.info("[API END] /ws/leave-groups completed")
         await websocket.send_json({
             "type": "complete",
             "message": "All operations completed!",
@@ -1081,6 +1366,7 @@ async def check_tgdna(request: Request):
     try:
         data = await request.json()
         sessions = data.get("sessions", [])
+        logger.info("[API START] /api/check-tgdna sessions=%d", len(sessions))
         logger.info("[FLOW] check_tgdna sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
@@ -1095,6 +1381,7 @@ async def check_tgdna(request: Request):
             result = results[idx]
             check_results.append(result)
         
+        logger.info("[API END] /api/check-tgdna completed")
         return {
             "success": True,
             "results": check_results
@@ -1115,8 +1402,13 @@ async def check_spambot(request: Request):
     Check session health status using @SpamBot for multiple sessions.
     Expects JSON with sessions array.
     """
+    _inv_path = "/api/check-spambot"
+    _inv_start_ts = time.time()
+    _inv_start = time.perf_counter()
+    _inv_response_sent = False
+    logger.info("[REQ_START] path=%s ts=%.3f", _inv_path, _inv_start_ts)
+    logger.info("[API START] /api/check-spambot")
     request_id = str(uuid.uuid4())
-    _start = time.perf_counter()
     try:
         data = await request.json()
         sessions = data.get("sessions", [])
@@ -1127,13 +1419,15 @@ async def check_spambot(request: Request):
         # Check sessions in parallel
         results = await check_sessions_health_parallel(sessions)
         success_count = sum(1 for r in (results.values() or []) if isinstance(r, dict) and r.get("success"))
-        logger.info("[FLOW] check_spambot done request_id=%s success=%s total=%s duration=%.2fs", request_id, success_count, len(sessions), time.perf_counter() - _start)
+        logger.info("[FLOW] check_spambot done request_id=%s success=%s total=%s duration=%.2fs", request_id, success_count, len(sessions), time.perf_counter() - _inv_start)
         # Convert results to list format for frontend
         check_results = []
         for idx in sorted(results.keys()):
             result = results[idx]
             check_results.append(result)
         
+        logger.info("[API END] /api/check-spambot completed")
+        _inv_response_sent = True
         return {
             "success": True,
             "results": check_results
@@ -1147,7 +1441,8 @@ async def check_spambot(request: Request):
             detail=f"Error checking SpamBot: {str(e)}"
         )
     finally:
-        logger.info("[END] check_spambot request_id=%s duration=%.2fs", request_id, time.perf_counter() - _start)
+        logger.info("[REQ_END] path=%s duration=%.2fs response_sent=%s", _inv_path, time.perf_counter() - _inv_start, _inv_response_sent)
+        logger.info("[END] check_spambot request_id=%s duration=%.2fs", request_id, time.perf_counter() - _inv_start)
 
 
 @app.post("/api/check-spambot-appeal")
@@ -1157,20 +1452,30 @@ async def check_spambot_appeal_endpoint(request: Request):
     Expects JSON with sessions array (each with name, path).
     Returns list of { session_name, path, phone, status, response, verify_results? }.
     """
+    _inv_path = "/api/check-spambot-appeal"
+    _inv_start_ts = time.time()
+    _inv_start = time.perf_counter()
+    _inv_response_sent = False
+    logger.info("[REQ_START] path=%s ts=%.3f", _inv_path, _inv_start_ts)
     try:
         data = await request.json()
         sessions = data.get("sessions", [])
+        logger.info("[API START] /api/check-spambot-appeal sessions=%d", len(sessions))
         logger.info("[FLOW] check_spambot_appeal sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
         results = await check_sessions_appeal_parallel(sessions)
         results_list = [results[i] for i in sorted(results.keys())]
         logger.info("[FLOW] check_spambot_appeal done results=%s", len(results_list))
+        logger.info("[API END] /api/check-spambot-appeal completed")
+        _inv_response_sent = True
         return {"success": True, "results": results_list}
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        logger.info("[REQ_END] path=%s duration=%.2fs response_sent=%s", _inv_path, time.perf_counter() - _inv_start, _inv_response_sent)
 
 
 @app.websocket("/ws/spambot-appeal")
@@ -1186,12 +1491,16 @@ async def spambot_appeal_ws(websocket: WebSocket):
         data = await websocket.receive_json()
         session = data.get("session", {})
         temp_dirs = data.get("temp_dirs", []) or []
+        status = (data.get("status") or "").strip().upper()
         path = session.get("path")
         if not path:
             await websocket.send_json({"type": "error", "message": "No session path provided"})
             return
         await websocket.send_json({"type": "start", "message": "Starting appeal process..."})
-        result = await submit_appeal(path, websocket)
+        if status == "FROZEN":
+            result = await submit_appeal_frozen(path, websocket)
+        else:
+            result = await submit_appeal(path, websocket)
         if result.get("success"):
             await websocket.send_json({
                 "type": "complete",
@@ -1234,6 +1543,7 @@ async def get_session_metadata(request: Request):
     try:
         data = await request.json()
         sessions = data.get("sessions", [])
+        logger.info("[API START] /api/session-metadata sessions=%d", len(sessions))
         logger.info("[FLOW] session_metadata sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
@@ -1242,6 +1552,7 @@ async def get_session_metadata(request: Request):
         results = await extract_metadata_parallel(sessions)
         success_count = sum(1 for r in (results.values() or []) if isinstance(r, dict) and r.get("success"))
         logger.info("[FLOW] session_metadata done success=%s total=%s", success_count, len(sessions))
+        logger.info("[API END] /api/session-metadata completed")
         # Convert results to list format for frontend
         metadata_results = []
         for idx in sorted(results.keys()):
@@ -1465,6 +1776,7 @@ async def apply_privacy_settings(request: Request):
     try:
         data = await request.json()
         sessions = data.get("sessions", [])
+        logger.info("[API START] /api/privacy-settings sessions=%d", len(sessions))
         logger.info("[FLOW] privacy_settings sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
@@ -1488,8 +1800,9 @@ async def apply_privacy_settings(request: Request):
                     try:
                         await capture_successful_operation_session(result, session_path, "privacy_settings")
                     except Exception as e:
-                        print(f"[Session Capture] Failed to capture session: {e}")
+                        logger.warning("[Session Capture] Failed to capture session: %s", e)
         
+        logger.info("[API END] /api/privacy-settings completed")
         # Convert results to list format for frontend
         results_list = [results[i] for i in sorted(results)]
         return {"results": results_list}
@@ -1515,7 +1828,7 @@ async def get_captured_sessions():
             "sessions": sessions
         }
     except Exception as e:
-        print(f"[API] Failed to fetch captured sessions: {e}")
+        logger.warning("[API] Failed to fetch captured sessions: %s", e)
         return {
             "success": False,
             "error": str(e),

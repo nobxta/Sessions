@@ -4,7 +4,10 @@ import asyncio
 import os
 from typing import List, Dict, Any
 from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
+from concurrency_config import MAX_CONCURRENT_SESSIONS
+import logging
 
+logger = logging.getLogger(__name__)
 API_ID = '25170767'
 API_HASH = 'd512fd74809a4ca3cd59078eef73afcd'
 
@@ -23,12 +26,14 @@ async def change_bio_for_session(session_path: str, new_bio: str) -> Dict[str, A
     # Remove .session extension if present
     if session_path.endswith('.session'):
         session_path = session_path[:-8]
-    
+    logger.info("[SESSION START] %s", session_path)
     client = TelegramClient(session_path, API_ID, API_HASH)
     
     try:
+        logger.info("[SESSION ACTION] %s connect", session_path)
         r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if r is TIMEOUT_SENTINEL:
+            logger.warning("[SESSION FAIL] %s error=%s", session_path, "Connection timed out")
             return {
                 "success": False,
                 "error": "Connection timed out",
@@ -63,7 +68,7 @@ async def change_bio_for_session(session_path: str, new_bio: str) -> Dict[str, A
             }
         
         await client.disconnect()
-        
+        logger.info("[SESSION END] %s success", session_path)
         return {
             "success": True,
             "new_bio": new_bio,
@@ -107,6 +112,7 @@ async def change_bio_for_session(session_path: str, new_bio: str) -> Dict[str, A
             await client.disconnect()
         except:
             pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, str(e))
         error_str = str(e)
         if "FROZEN_METHOD_INVALID" in error_str or "420" in error_str:
             error_msg = "Frozen Account - Cannot update bio"
@@ -138,13 +144,15 @@ async def change_bios_parallel(sessions: List[Dict[str, Any]]) -> Dict[int, Dict
         result = await change_bio_for_session(path, bio)
         return index, result
     
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_SESSIONS)
+    async def sem_task(path: str, bio: str, index: int):
+        async with semaphore:
+            return await change_bio_with_index(path, bio, index)
     tasks = []
-    
     for idx, session_info in enumerate(sessions):
         session_path = session_info.get("path") or session_info.get("name", "")
         new_bio = session_info.get("new_bio", "")
-        
-        tasks.append(change_bio_with_index(session_path, new_bio, idx))
+        tasks.append(sem_task(session_path, new_bio, idx))
     
     # Run all updates in parallel
     results_list = await asyncio.gather(*tasks)

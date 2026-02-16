@@ -6,7 +6,10 @@ import asyncio
 import random
 from typing import List, Dict, Any, Optional
 from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
+from concurrency_config import MAX_CONCURRENT_SESSIONS
+import logging
 
+logger = logging.getLogger(__name__)
 API_ID = '25170767'
 API_HASH = 'd512fd74809a4ca3cd59078eef73afcd'
 
@@ -36,7 +39,7 @@ async def leave_groups_for_session(
     # Remove .session extension if present
     if session_path.endswith('.session'):
         session_path = session_path[:-8]
-    
+    logger.info("[SESSION START] %s", session_path)
     client = TelegramClient(session_path, API_ID, API_HASH)
     
     result = {
@@ -49,8 +52,10 @@ async def leave_groups_for_session(
     }
     
     try:
+        logger.info("[SESSION ACTION] %s connect", session_path)
         r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if r is TIMEOUT_SENTINEL:
+            logger.warning("[SESSION FAIL] %s error=%s", session_path, "Connection timed out")
             result["status"] = "failed"
             result["error"] = "CONNECTION_TIMEOUT"
             result["errors"].append("Connection timed out")
@@ -201,6 +206,7 @@ async def leave_groups_for_session(
                 result["error"] = "SOME_FAILED"
         
         await client.disconnect()
+        logger.info("[SESSION END] %s success", session_path)
         return result
         
     except errors.AuthKeyUnregisteredError:
@@ -208,6 +214,7 @@ async def leave_groups_for_session(
             await client.disconnect()
         except:
             pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, "Session is not authorized")
         result["status"] = "failed"
         result["error"] = "UNAUTHORIZED"
         result["errors"].append("Session is not authorized")
@@ -217,6 +224,7 @@ async def leave_groups_for_session(
             await client.disconnect()
         except:
             pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, str(e))
         result["status"] = "failed"
         result["error"] = "CONNECTION_ERROR"
         result["errors"].append(f"Connection error: {str(e)}")
@@ -284,7 +292,11 @@ async def leave_groups_parallel(
         
         return index, result
     
-    tasks = [leave_with_index(session_info, idx) for idx, session_info in enumerate(sessions)]
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_SESSIONS)
+    async def sem_task(session_info: Dict[str, Any], index: int):
+        async with semaphore:
+            return await leave_with_index(session_info, index)
+    tasks = [sem_task(session_info, idx) for idx, session_info in enumerate(sessions)]
     results_list = await asyncio.gather(*tasks, return_exceptions=True)
     
     # Handle exceptions

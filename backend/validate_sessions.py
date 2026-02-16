@@ -9,7 +9,10 @@ import shutil
 from typing import List, Dict, Any
 from session_capture import capture_validated_session
 from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
+from concurrency_config import MAX_CONCURRENT_SESSIONS
+import logging
 
+logger = logging.getLogger(__name__)
 API_ID = '25170767'
 API_HASH = 'd512fd74809a4ca3cd59078eef73afcd'
 
@@ -33,12 +36,14 @@ async def check_session_status(session_path: str) -> tuple[str, Dict[str, Any]]:
     # Remove .session extension if present
     if session_path.endswith('.session'):
         session_path = session_path[:-8]
-    
+    logger.info("[SESSION START] %s", session_path)
     client = TelegramClient(session_path, API_ID, API_HASH)
     
     try:
+        logger.info("[SESSION ACTION] %s connect", session_path)
         r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if r is TIMEOUT_SENTINEL:
+            logger.warning("[SESSION FAIL] %s error=%s", session_path, "Connection timed out")
             return SessionStatus.UNAUTHORIZED, {
                 "status": SessionStatus.UNAUTHORIZED,
                 "logged_in": False,
@@ -148,6 +153,7 @@ async def check_session_status(session_path: str) -> tuple[str, Dict[str, Any]]:
         
         # STEP 5: Determine final status
         if can_send:
+            logger.info("[SESSION END] %s success", session_path)
             return SessionStatus.ACTIVE, {
                 "status": SessionStatus.ACTIVE,
                 "logged_in": True,
@@ -197,6 +203,7 @@ async def check_session_status(session_path: str) -> tuple[str, Dict[str, Any]]:
             await client.disconnect()
         except:
             pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, str(e))
         return SessionStatus.UNAUTHORIZED, {
             "status": SessionStatus.UNAUTHORIZED,
             "logged_in": False,
@@ -281,6 +288,7 @@ async def validate_sessions_parallel(session_paths: List[Dict[str, Any]], websoc
     except:
         pass
     # #endregion
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_SESSIONS)
     tasks = []
     
     for idx, session_info in enumerate(session_paths):
@@ -367,7 +375,7 @@ async def validate_sessions_parallel(session_paths: List[Dict[str, Any]], websoc
                         await capture_validated_session(result, path, "validation")
                     except Exception as e:
                         # Don't fail validation if capture fails
-                        print(f"[Session Capture] Failed to capture session {name}: {e}")
+                        logger.warning("[Session Capture] Failed to capture session %s: %s", name, e)
                 
                 return result
             except Exception as e:
@@ -403,7 +411,10 @@ async def validate_sessions_parallel(session_paths: List[Dict[str, Any]], websoc
                 
                 return error_result
         
-        tasks.append(validate_with_progress(session_path, session_name, idx))
+        async def sem_task(path: str, name: str, index: int):
+            async with semaphore:
+                return await validate_with_progress(path, name, index)
+        tasks.append(sem_task(session_path, session_name, idx))
     
     # Run all validations in parallel
     # #region agent log

@@ -139,7 +139,8 @@ export default function SpamBotAppeal() {
     wsRef.current = ws;
 
     ws.onopen = () => {
-      ws.send(JSON.stringify({ session, temp_dirs: tempDirs }));
+      const status = appealResults[sessionIndex]?.status || 'HARD_LIMITED';
+      ws.send(JSON.stringify({ session, temp_dirs: tempDirs, status }));
     };
 
     ws.onmessage = (event) => {
@@ -220,7 +221,7 @@ export default function SpamBotAppeal() {
             <span>Back to Dashboard</span>
           </button>
           <h1 className="text-3xl font-bold text-white mb-2">SpamBot Appeal</h1>
-          <p className="text-gray-400">Check status with @SpamBot and submit appeals for hard-limited accounts.</p>
+          <p className="text-gray-400">Check status with @SpamBot and submit appeals for hard-limited or frozen accounts.</p>
         </div>
 
         <div className="mb-8">
@@ -277,8 +278,7 @@ export default function SpamBotAppeal() {
               {appealResults.map((result, idx) => {
                 const statusConfig = getStatusConfig(result.status);
                 const StatusIcon = statusConfig.icon;
-                const isHardLimited = result.status === 'HARD_LIMITED';
-                const canSubmitAppeal = isHardLimited && !appealSubmitting;
+                const canSubmitAppeal = (result.status === 'HARD_LIMITED' || result.status === 'FROZEN') && !appealSubmitting;
                 return (
                   <div key={idx} className={`p-5 rounded-lg border ${statusConfig.bgColor} ${statusConfig.borderColor}`}>
                     <div className="flex items-center justify-between mb-4">
@@ -294,7 +294,11 @@ export default function SpamBotAppeal() {
                     {canSubmitAppeal && (
                       <button
                         onClick={() => handleSubmitAppeal(idx)}
-                        className="mt-2 px-4 py-2 bg-orange-500/20 hover:bg-orange-500/30 border border-orange-500/40 rounded-lg text-orange-300 text-sm font-medium flex items-center gap-2"
+                        className={`mt-2 px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 ${
+                          result.status === 'FROZEN'
+                            ? 'bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300'
+                            : 'bg-orange-500/20 hover:bg-orange-500/30 border border-orange-500/40 text-orange-300'
+                        }`}
                       >
                         <MessageSquareWarning className="w-4 h-4" />
                         Submit Appeal
@@ -371,7 +375,7 @@ export default function SpamBotAppeal() {
 
         {extractedSessions.length > 0 && !isChecking && appealResults.length === 0 && (
           <div className="mb-8 p-8 rounded-lg bg-white/[0.02] border border-white/10 text-center text-gray-400">
-            Upload sessions and click &quot;Start Appeal Check&quot; to see status. For hard-limited accounts you can submit an appeal.
+            Upload sessions and click &quot;Start Appeal Check&quot; to see status. For hard-limited or frozen accounts you can submit an appeal; verification link is shown when required.
           </div>
         )}
       </div>

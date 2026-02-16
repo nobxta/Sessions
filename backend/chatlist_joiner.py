@@ -10,7 +10,10 @@ import asyncio
 from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
 import re
 from typing import List, Dict, Any, Optional
+from concurrency_config import MAX_CONCURRENT_SESSIONS
+import logging
 
+logger = logging.getLogger(__name__)
 API_ID = '25170767'
 API_HASH = 'd512fd74809a4ca3cd59078eef73afcd'
 
@@ -52,13 +55,15 @@ async def leave_multiple_folders(session_path: str, folder_ids: List[int]) -> Di
     """
     if session_path.endswith('.session'):
         session_path = session_path[:-8]
-    
+    logger.info("[SESSION START] %s", session_path)
     client = TelegramClient(session_path, API_ID, API_HASH)
     result = {"left_count": 0, "errors": []}
     
     try:
+        logger.info("[SESSION ACTION] %s connect", session_path)
         r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if r is TIMEOUT_SENTINEL:
+            logger.warning("[SESSION FAIL] %s error=%s", session_path, "Connection timed out")
             return {"left_count": 0, "errors": ["Connection timed out"]}
         
         is_auth = await run_with_timeout(client.is_user_authorized(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
@@ -130,6 +135,7 @@ async def leave_multiple_folders(session_path: str, folder_ids: List[int]) -> Di
                     pass
         
         await client.disconnect()
+        logger.info("[SESSION END] %s success", session_path)
         return result
         
     except Exception as e:
@@ -137,6 +143,7 @@ async def leave_multiple_folders(session_path: str, folder_ids: List[int]) -> Di
             await client.disconnect()
         except:
             pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, str(e))
         return {"left_count": 0, "errors": [f"Connection error: {str(e)}"]}
 
 
@@ -259,12 +266,14 @@ async def join_chatlist_link(session_path: str, invite_hash: str, is_premium: bo
     """
     if session_path.endswith('.session'):
         session_path = session_path[:-8]
-    
+    logger.info("[SESSION START] %s", session_path)
     client = TelegramClient(session_path, API_ID, API_HASH)
     
     try:
+        logger.info("[SESSION ACTION] %s connect", session_path)
         r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if r is TIMEOUT_SENTINEL:
+            logger.warning("[SESSION FAIL] %s error=%s", session_path, "Connection timed out")
             return {
                 "success": False,
                 "error": "Connection timed out",
@@ -274,6 +283,7 @@ async def join_chatlist_link(session_path: str, invite_hash: str, is_premium: bo
         is_auth = await run_with_timeout(client.is_user_authorized(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if is_auth is TIMEOUT_SENTINEL or not is_auth:
             await client.disconnect()
+            logger.warning("[SESSION FAIL] %s error=%s", session_path, "Session is not authorized" if is_auth is not TIMEOUT_SENTINEL else "Operation timed out")
             return {
                 "success": False,
                 "error": "Session is not authorized" if is_auth is not TIMEOUT_SENTINEL else "Operation timed out",
@@ -445,6 +455,7 @@ async def join_chatlist_link(session_path: str, invite_hash: str, is_premium: bo
                     group_count = len(new_folder.include_peers) if hasattr(new_folder, 'include_peers') and new_folder.include_peers else 0
                     
                     if not is_premium and group_count > MAX_GROUPS_PER_FOLDER:
+                        logger.warning("[SESSION FAIL] %s error=%s", session_path, "NON_PREMIUM_LIMIT")
                         return {
                             "success": False,
                             "error": "NON_PREMIUM_LIMIT",
@@ -452,6 +463,7 @@ async def join_chatlist_link(session_path: str, invite_hash: str, is_premium: bo
                             "message": f"Folder exceeds {MAX_GROUPS_PER_FOLDER} groups limit for non-premium"
                         }
                     
+                    logger.info("[SESSION END] %s success", session_path)
                     return {
                         "success": True,
                         "status": "success",
@@ -461,6 +473,7 @@ async def join_chatlist_link(session_path: str, invite_hash: str, is_premium: bo
                     }
                 else:
                     # Folder was added but we couldn't identify it (shouldn't happen, but handle gracefully)
+                    logger.info("[SESSION END] %s success", session_path)
                     return {
                         "success": True,
                         "status": "success",
@@ -554,6 +567,7 @@ async def join_chatlist_link(session_path: str, invite_hash: str, is_premium: bo
             await client.disconnect()
         except:
             pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, str(e))
         return {
             "success": False,
             "error": "UNKNOWN",
@@ -713,7 +727,11 @@ async def process_chatlists_parallel(
             index
         )
     
-    tasks = [process_with_index(session_info, idx) for idx, session_info in enumerate(sessions)]
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_SESSIONS)
+    async def sem_task(session_info: Dict[str, Any], index: int):
+        async with semaphore:
+            return await process_with_index(session_info, index)
+    tasks = [sem_task(session_info, idx) for idx, session_info in enumerate(sessions)]
     results_list = await asyncio.gather(*tasks, return_exceptions=True)
     
     # Handle exceptions

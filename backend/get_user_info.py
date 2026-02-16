@@ -2,7 +2,10 @@ from telethon import TelegramClient, errors
 import asyncio
 from typing import List, Dict, Any
 from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
+from concurrency_config import MAX_CONCURRENT_SESSIONS
+import logging
 
+logger = logging.getLogger(__name__)
 API_ID = '25170767'
 API_HASH = 'd512fd74809a4ca3cd59078eef73afcd'
 
@@ -20,12 +23,14 @@ async def get_user_info(session_path: str) -> Dict[str, Any]:
     # Remove .session extension if present
     if session_path.endswith('.session'):
         session_path = session_path[:-8]
-    
+    logger.info("[SESSION START] %s", session_path)
     client = TelegramClient(session_path, API_ID, API_HASH)
     
     try:
+        logger.info("[SESSION ACTION] %s connect", session_path)
         r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if r is TIMEOUT_SENTINEL:
+            logger.warning("[SESSION FAIL] %s error=%s", session_path, "Connection timed out")
             return {
                 "success": False,
                 "error": "Connection timed out",
@@ -60,7 +65,7 @@ async def get_user_info(session_path: str) -> Dict[str, Any]:
             }
         
         await client.disconnect()
-        
+        logger.info("[SESSION END] %s success", session_path)
         return {
             "success": True,
             "user_id": me.id,
@@ -76,6 +81,7 @@ async def get_user_info(session_path: str) -> Dict[str, Any]:
             await client.disconnect()
         except:
             pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, str(e))
         return {
             "success": False,
             "error": str(e),
@@ -97,11 +103,14 @@ async def get_user_info_parallel(sessions: List[Dict[str, Any]]) -> Dict[int, Di
         result = await get_user_info(path)
         return index, result
     
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_SESSIONS)
+    async def sem_task(path: str, index: int):
+        async with semaphore:
+            return await get_info_with_index(path, index)
     tasks = []
-    
     for idx, session_info in enumerate(sessions):
         session_path = session_info.get("path") or session_info.get("name", "")
-        tasks.append(get_info_with_index(session_path, idx))
+        tasks.append(sem_task(session_path, idx))
     
     # Run all info fetches in parallel
     results_list = await asyncio.gather(*tasks)

@@ -3,7 +3,10 @@ import asyncio
 import re
 from typing import Dict, Any
 from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
+from concurrency_config import MAX_CONCURRENT_SESSIONS
+import logging
 
+logger = logging.getLogger(__name__)
 API_ID = '25170767'
 API_HASH = 'd512fd74809a4ca3cd59078eef73afcd'
 TGDNA_BOT_USERNAME = 'TGDNAbot'  # Also try 'tgdnabot' if this doesn't work
@@ -36,7 +39,7 @@ async def check_session_age_tgdna(
     # Remove .session extension if present
     if session_path.endswith('.session'):
         session_path = session_path[:-8]
-    
+    logger.info("[SESSION START] %s", session_path)
     client = TelegramClient(session_path, api_id, api_hash)
     
     result = {
@@ -51,12 +54,14 @@ async def check_session_age_tgdna(
     }
     
     try:
+        logger.info("[SESSION ACTION] %s connect", session_path)
         r = await run_with_timeout(client.start(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if r is TIMEOUT_SENTINEL:
             try:
                 await client.disconnect()
             except:
                 pass
+            logger.warning("[SESSION FAIL] %s error=%s", session_path, "Connection timed out")
             result["error"] = "Connection timed out"
             return result
         
@@ -78,6 +83,7 @@ async def check_session_age_tgdna(
         bot_entity = None
         possible_usernames = ['TGDNAbot', 'tgdnabot', 'TG_DNA_bot']
         
+        logger.info("[SESSION ACTION] %s get_entity", session_path)
         for username in possible_usernames:
             try:
                 bot_entity = await run_with_timeout(client.get_entity(username), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
@@ -92,6 +98,7 @@ async def check_session_age_tgdna(
             return result
         
         # Send /start command
+        logger.info("[SESSION ACTION] %s send_message", session_path)
         try:
             send_r = await run_with_timeout(client.send_message(bot_entity, '/start'), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
             if send_r is TIMEOUT_SENTINEL:
@@ -191,10 +198,12 @@ async def check_session_age_tgdna(
         if parsed_data:
             result.update(parsed_data)
             result["success"] = True
+            logger.info("[SESSION END] %s success", session_path)
         else:
             # Include a snippet of the message for debugging
             msg_snippet = bot_message[:200] if len(bot_message) > 200 else bot_message
             result["error"] = f"Could not parse bot response. Message snippet: {msg_snippet}"
+            logger.warning("[SESSION FAIL] %s error=%s", session_path, result["error"])
         
         await client.disconnect()
         return result
@@ -204,6 +213,7 @@ async def check_session_age_tgdna(
             await client.disconnect()
         except:
             pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, "Session is not authorized")
         result["error"] = "Session is not authorized"
         return result
     except errors.UserBannedInChannel:
@@ -211,6 +221,7 @@ async def check_session_age_tgdna(
             await client.disconnect()
         except:
             pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, "Account is banned")
         result["error"] = "Account is banned"
         return result
     except asyncio.TimeoutError:
@@ -218,6 +229,7 @@ async def check_session_age_tgdna(
             await client.disconnect()
         except:
             pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, "Operation timed out")
         result["error"] = "Operation timed out"
         return result
     except Exception as e:
@@ -225,6 +237,7 @@ async def check_session_age_tgdna(
             await client.disconnect()
         except:
             pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, str(e))
         result["error"] = f"Error: {str(e)}"
         return result
 
@@ -307,7 +320,11 @@ async def check_sessions_age_parallel(sessions: list) -> Dict[int, Dict[str, Any
         result["index"] = index
         return index, result
     
-    tasks = [check_with_index(session_info, idx) for idx, session_info in enumerate(sessions)]
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_SESSIONS)
+    async def sem_task(session_info: Dict[str, Any], index: int):
+        async with semaphore:
+            return await check_with_index(session_info, index)
+    tasks = [sem_task(session_info, idx) for idx, session_info in enumerate(sessions)]
     results_list = await asyncio.gather(*tasks, return_exceptions=True)
     
     # Handle exceptions

@@ -3,7 +3,10 @@ from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOU
 from telethon.tl.functions.account import GetPasswordRequest
 import asyncio
 from typing import Dict, Any, List
+from concurrency_config import MAX_CONCURRENT_SESSIONS
+import logging
 
+logger = logging.getLogger(__name__)
 API_ID = '25170767'
 API_HASH = 'd512fd74809a4ca3cd59078eef73afcd'
 
@@ -44,7 +47,7 @@ async def extract_session_metadata(
     # Remove .session extension if present
     if session_path.endswith('.session'):
         session_path = session_path[:-8]
-    
+    logger.info("[SESSION START] %s", session_path)
     client = TelegramClient(session_path, api_id, api_hash)
     
     result = {
@@ -65,8 +68,10 @@ async def extract_session_metadata(
     }
     
     try:
+        logger.info("[SESSION ACTION] %s connect", session_path)
         r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if r is TIMEOUT_SENTINEL:
+            logger.warning("[SESSION FAIL] %s error=%s", session_path, "Connection timed out")
             result["error"] = "Connection timed out"
             return result
         
@@ -119,6 +124,7 @@ async def extract_session_metadata(
         result["account_creation_year"] = None
         
         result["success"] = True
+        logger.info("[SESSION END] %s success", session_path)
         await client.disconnect()
         return result
         
@@ -127,6 +133,7 @@ async def extract_session_metadata(
             await client.disconnect()
         except:
             pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, "Session is not authorized")
         result["error"] = "Session is not authorized"
         return result
     except Exception as e:
@@ -134,6 +141,7 @@ async def extract_session_metadata(
             await client.disconnect()
         except:
             pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, str(e))
         result["error"] = f"Error extracting metadata: {str(e)}"
         return result
 
@@ -163,7 +171,11 @@ async def extract_metadata_parallel(sessions: List[Dict[str, Any]]) -> Dict[int,
         result["session_name"] = session_info.get("name", session_path)
         return index, result
     
-    tasks = [extract_with_index(session_info, idx) for idx, session_info in enumerate(sessions)]
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_SESSIONS)
+    async def sem_task(session_info: Dict[str, Any], index: int):
+        async with semaphore:
+            return await extract_with_index(session_info, index)
+    tasks = [sem_task(session_info, idx) for idx, session_info in enumerate(sessions)]
     results_list = await asyncio.gather(*tasks, return_exceptions=True)
     
     # Handle exceptions

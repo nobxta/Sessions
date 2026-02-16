@@ -14,7 +14,10 @@ from telethon.tl.types import (
 )
 import asyncio
 from typing import List, Dict, Any, Tuple, Optional
+from concurrency_config import MAX_CONCURRENT_SESSIONS
+import logging
 
+logger = logging.getLogger(__name__)
 API_ID = '25170767'
 API_HASH = 'd512fd74809a4ca3cd59078eef73afcd'
 
@@ -55,12 +58,14 @@ async def apply_privacy_settings_for_session(
     # Remove .session extension if present
     if session_path.endswith('.session'):
         session_path = session_path[:-8]
-    
+    logger.info("[SESSION START] %s", session_path)
     client = TelegramClient(session_path, API_ID, API_HASH)
     
     try:
+        logger.info("[SESSION ACTION] %s connect", session_path)
         r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if r is TIMEOUT_SENTINEL:
+            logger.warning("[SESSION FAIL] %s error=%s", session_path, "Connection timed out")
             return {
                 "success": False,
                 "error": "Connection timed out",
@@ -135,12 +140,14 @@ async def apply_privacy_settings_for_session(
         await client.disconnect()
         
         if errors and not applied_settings:
+            logger.warning("[SESSION FAIL] %s error=%s", session_path, "; ".join(errors))
             return {
                 "success": False,
                 "error": "; ".join(errors),
                 "session_path": session_path
             }
         elif errors:
+            logger.info("[SESSION END] %s success", session_path)
             return {
                 "success": True,
                 "applied_settings": applied_settings,
@@ -148,6 +155,7 @@ async def apply_privacy_settings_for_session(
                 "session_path": session_path
             }
         else:
+            logger.info("[SESSION END] %s success", session_path)
             return {
                 "success": True,
                 "applied_settings": applied_settings,
@@ -199,6 +207,7 @@ async def apply_privacy_settings_for_session(
             await client.disconnect()
         except:
             pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, str(e))
         return {
             "success": False,
             "error": f"Error: {str(e)}",
@@ -220,6 +229,10 @@ async def apply_privacy_settings_parallel(
     Returns:
         dict: Results indexed by session index
     """
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_SESSIONS)
+    async def run_with_sem(session_path: str, settings: Dict[str, Any]):
+        async with semaphore:
+            return await apply_privacy_settings_for_session(session_path, settings)
     tasks = []
     for idx, session in enumerate(sessions):
         session_path = session.get("path")
@@ -228,7 +241,7 @@ async def apply_privacy_settings_parallel(
         if not session_path:
             continue
         
-        task = apply_privacy_settings_for_session(session_path, settings)
+        task = run_with_sem(session_path, settings)
         tasks.append((idx, task))
     
     # Execute all tasks concurrently

@@ -12,6 +12,7 @@ import logging
 from typing import Dict, Any, List, Optional, Tuple
 
 from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
+from concurrency_config import MAX_CONCURRENT_SESSIONS
 from spambot_checker import (
     check_session_health_spambot,
     classify_spambot_response,
@@ -33,12 +34,30 @@ STATUS_FROZEN = "FROZEN"
 STATUS_ERROR = "ERROR"
 
 APPEAL_TEXTS = [
-    "I believe this is a mistake. I only message people I know personally and have never sent unsolicited messages.",
-    "I think my account was limited by mistake. I have never sent spam or violated Telegram's Terms of Service.",
-    "This limitation was applied in error. I use Telegram only for personal communication with contacts.",
-    "I respectfully request a review. My account has been used only for legitimate personal messaging.",
-    "I believe there has been a misunderstanding. I have not engaged in any spam or abusive behavior.",
+    "I believe this restriction has been applied by mistake. I use Telegram only to communicate with people I personally know, including friends, family members, and professional contacts. I have never intentionally sent unsolicited advertisements or spam messages. This account is extremely important to me because it contains years of personal conversations, contacts, and important communication history. I kindly request a manual review of my account so this issue can be resolved as soon as possible.",
+    "I respectfully request a review of my account, as I believe the limitation was applied incorrectly. I primarily use Telegram for normal daily communication with my family, friends, and known contacts. I have never engaged in mass messaging, spam distribution, or any activity that violates Telegram’s Terms of Service. This account holds critical personal data and conversations that are very important to me, and I would greatly appreciate your urgent assistance in restoring access.",
+    "I think there has been a misunderstanding regarding my account. I run a small clothing business and use Telegram only to communicate with my existing customers who have voluntarily contacted me for orders and product updates. I do not send unsolicited promotional messages to strangers. This account is essential for my business operations, and losing access affects my ability to serve my clients. I kindly request a careful review and restoration of my account at the earliest possible time.",
+    "I believe my account was mistakenly flagged. I am a medical professional and use Telegram mainly to communicate with other doctors, colleagues, and known patients for coordination and professional discussions. I do not participate in spam messaging or unsolicited promotions. This account is very important for my professional communication network, and I would sincerely appreciate a prompt manual review to correct this error.",
+    "I respectfully believe that this action may have been triggered in error. I use Telegram strictly for legitimate communication purposes, including coordinating work-related discussions and staying in touch with known contacts. I have never intentionally sent bulk or unsolicited messages. This account contains valuable professional contacts and important conversation records, so I kindly request an urgent review and restoration of my account.",
+    "I believe there has been an error in the restriction placed on my account. My Telegram usage is limited to communication with my personal contacts, business clients who have directly connected with me, and trusted groups that I am a member of. I have always tried to follow Telegram’s policies carefully and have never engaged in spam activity. This account is extremely important to my daily communication and business continuity, so I sincerely request your assistance in reviewing and restoring my account as soon as possible."
 ]
+
+# Frozen-account appeal: random names (10), emails, years, and short messages for questionnaire
+FROZEN_NAMES = [
+    "James Wilson", "Emma Martinez", "Oliver Brown", "Sophia Davis", "Liam Anderson",
+    "Isabella Taylor", "Noah Thomas", "Ava Jackson", "Nobii Smith", "Mia Johnson",
+]
+FROZEN_EMAIL_DOMAINS = ["gmail.com", "outlook.com", "yahoo.com", "icloud.com", "protonmail.com"]
+FROZEN_YEARS = ["2019", "2020", "2021", "2022", "2023", "2024"]
+FROZEN_SHORT_MESSAGES = [
+    "a friend suggested me about telegram",
+    "i like to chat with family",
+    "chatting with friends and family",
+    "personal and work communication",
+    "keeping in touch with contacts",
+]
+FROZEN_DAILY_USE = ["chatting", "I like to chat with family", "Messaging friends and groups", "Personal communication"]
+FROZEN_DISCOVERY = "a friend"
 
 
 def _normalize_status(spambot_status: str) -> str:
@@ -284,9 +303,11 @@ async def verify_temp_limited(
     """
     if session_path.endswith(".session"):
         session_path = session_path[:-8]
+    logger.info("[SESSION START] %s", session_path)
     client = TelegramClient(session_path, API_ID, API_HASH)
     results = []
     try:
+        logger.info("[SESSION ACTION] %s connect", session_path)
         r = await run_with_timeout(client.start(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if r is TIMEOUT_SENTINEL:
             try:
@@ -333,11 +354,13 @@ async def verify_temp_limited(
             except Exception as e:
                 results.append({"status": STATUS_ERROR, "response": str(e)})
         await client.disconnect()
+        logger.info("[SESSION END] %s success", session_path)
     except Exception as e:
         try:
             await client.disconnect()
         except Exception:
             pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, str(e))
         results = [{"status": STATUS_ERROR, "response": str(e)}]
     return results
 
@@ -354,8 +377,10 @@ async def submit_appeal(
     """
     if session_path.endswith(".session"):
         session_path = session_path[:-8]
+    logger.info("[SESSION START] %s", session_path)
     client = TelegramClient(session_path, API_ID, API_HASH)
     try:
+        logger.info("[SESSION ACTION] %s connect", session_path)
         r = await run_with_timeout(client.start(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if r is TIMEOUT_SENTINEL:
             try:
@@ -448,13 +473,194 @@ async def submit_appeal(
         await asyncio.sleep(3.0)
         final_response = await _get_spambot_response(client, bot_entity, timeout=15.0)
         await client.disconnect()
+        logger.info("[SESSION END] %s success", session_path)
         return {"success": True, "final_response": final_response, "appeal_sent": appeal_text}
     except Exception as e:
         try:
             await client.disconnect()
         except Exception:
             pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, str(e))
         logger.exception("submit_appeal failed")
+        return {"success": False, "error": str(e), "final_response": None}
+
+
+def _frozen_reply_for_message(text: str) -> Optional[str]:
+    """Return the reply to send for frozen-appeal questionnaire, or None if not matched."""
+    if not text:
+        return None
+    t = text.lower()
+    if "full legal name" in t or ("legal name" in t and "enter" in t):
+        return random.choice(FROZEN_NAMES)
+    if "contact email" in t or ("email" in t and "enter" in t):
+        name_part = random.choice(FROZEN_NAMES).split()[0].lower()
+        domain = random.choice(FROZEN_EMAIL_DOMAINS)
+        return f"{name_part}@{domain}"
+    if "year" in t and ("sign up" in t or "signup" in t):
+        return random.choice(FROZEN_YEARS)
+    if "how you discovered" in t or "who invited" in t:
+        return FROZEN_DISCOVERY
+    if "general description" in t and ("telegram" in t or "discovered" in t):
+        return FROZEN_DISCOVERY
+    if "please send me a text message" in t:
+        return random.choice(FROZEN_SHORT_MESSAGES)
+    if "average daily use" in t or "daily use" in t or "daily use of telegram" in t:
+        return random.choice(FROZEN_DAILY_USE)
+    if "by submitting" in t and "acknowledge" in t:
+        return "Confirm"
+    if "acknowledge" in t and "agree" in t:
+        return "Confirm"
+    return None
+
+
+async def submit_appeal_frozen(
+    session_path: str,
+    websocket: Any,
+) -> Dict[str, Any]:
+    """
+    Full appeal flow for frozen (blocked) account. Same chat as hard limit:
+    /start → "This is a mistake" → "Yes" → appeal details → questionnaire (name, email, year,
+    discovery, text message x2, daily use) → Confirm → verify human (link) → Done → success.
+    """
+    if session_path.endswith(".session"):
+        session_path = session_path[:-8]
+    logger.info("[SESSION START] %s (frozen appeal)", session_path)
+    client = TelegramClient(session_path, API_ID, API_HASH)
+    try:
+        logger.info("[SESSION ACTION] %s connect", session_path)
+        r = await run_with_timeout(client.start(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if r is TIMEOUT_SENTINEL:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            return {"success": False, "error": "Connection timed out", "final_response": None}
+        is_auth = await run_with_timeout(client.is_user_authorized(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if is_auth is TIMEOUT_SENTINEL or not is_auth:
+            await client.disconnect()
+            return {"success": False, "error": "Session not authorized" if is_auth is not TIMEOUT_SENTINEL else "Operation timed out", "final_response": None}
+        bot_entity = None
+        for uname in SPAMBOT_USERNAMES:
+            try:
+                bot_entity = await run_with_timeout(client.get_entity(uname), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+                if bot_entity is not TIMEOUT_SENTINEL:
+                    break
+            except Exception:
+                continue
+        if not bot_entity or bot_entity is TIMEOUT_SENTINEL:
+            await client.disconnect()
+            return {"success": False, "error": "Could not find @SpamBot", "final_response": None}
+
+        async def send_progress(step: str, message: str):
+            try:
+                await websocket.send_json({"type": "progress", "step": step, "message": message})
+            except Exception:
+                pass
+
+        send_r = await run_with_timeout(client.send_message(bot_entity, "/start"), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if send_r is TIMEOUT_SENTINEL:
+            await client.disconnect()
+            return {"success": False, "error": "Operation timed out", "final_response": None}
+        await asyncio.sleep(1.5)
+        await send_progress("mistake", "Sent: 'This is a mistake'")
+        send_r = await run_with_timeout(client.send_message(bot_entity, "This is a mistake"), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if send_r is TIMEOUT_SENTINEL:
+            await client.disconnect()
+            return {"success": False, "error": "Operation timed out", "final_response": None}
+        await asyncio.sleep(2.0)
+        await send_progress("yes", "Sent: 'Yes'")
+        send_r = await run_with_timeout(client.send_message(bot_entity, "Yes"), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if send_r is TIMEOUT_SENTINEL:
+            await client.disconnect()
+            return {"success": False, "error": "Operation timed out", "final_response": None}
+        await asyncio.sleep(2.0)
+        # Wait for "Please write us more details about your case"
+        await send_progress("wait_details", "Waiting for SpamBot to request details...")
+        details_msg = await _wait_for_next_bot_message(client, bot_entity, timeout=15.0)
+        if not details_msg:
+            await client.disconnect()
+            return {"success": False, "error": "No details request from SpamBot (timeout)", "final_response": None}
+        appeal_text = random.choice(APPEAL_TEXTS)
+        await send_progress("appeal_text", "Sending appeal details...")
+        send_r = await run_with_timeout(client.send_message(bot_entity, appeal_text), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        if send_r is TIMEOUT_SENTINEL:
+            await client.disconnect()
+            return {"success": False, "error": "Operation timed out", "final_response": None}
+        await asyncio.sleep(1.5)
+
+        # Questionnaire loop: reply to each bot message until we get verification or success
+        max_steps = 25
+        for _ in range(max_steps):
+            msg = await _wait_for_next_bot_message(client, bot_entity, timeout=20.0)
+            if not msg:
+                await client.disconnect()
+                return {"success": False, "error": "No response from SpamBot (timeout)", "final_response": None}
+            msg_text = (getattr(msg, "message", None) or getattr(msg, "text", None) or "").strip()
+            msg_lower = msg_text.lower()
+
+            # Success message
+            if "successfully submitted" in msg_lower or "thank you" in msg_lower and "appeal" in msg_lower:
+                await client.disconnect()
+                logger.info("[SESSION END] %s frozen appeal success", session_path)
+                return {"success": True, "final_response": msg_text, "appeal_sent": appeal_text}
+
+            # Verification: send link to UI, wait for confirm, send Done
+            if _is_verification_request(msg_text):
+                verification_link = _extract_verification_link_from_message(msg)
+                await websocket.send_json({
+                    "type": "verification_required",
+                    "link": verification_link or "",
+                    "message": msg_text or "Please verify you are a human. Open the link, complete the step, then click Done.",
+                })
+                while True:
+                    try:
+                        wmsg = await asyncio.wait_for(websocket.receive_json(), timeout=300.0)
+                        if wmsg.get("action") == "confirm_verification":
+                            break
+                    except asyncio.TimeoutError:
+                        await client.disconnect()
+                        return {"success": False, "error": "Verification confirmation timeout", "final_response": None}
+                await send_progress("done", "Sent: 'Done'")
+                send_r = await run_with_timeout(client.send_message(bot_entity, "Done"), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+                if send_r is TIMEOUT_SENTINEL:
+                    await client.disconnect()
+                    return {"success": False, "error": "Operation timed out", "final_response": None}
+                await asyncio.sleep(3.0)
+                final_msg = await _wait_for_next_bot_message(client, bot_entity, timeout=15.0)
+                final_text = (getattr(final_msg, "message", None) or getattr(final_msg, "text", None) or "") if final_msg else ""
+                await client.disconnect()
+                logger.info("[SESSION END] %s frozen appeal success", session_path)
+                return {"success": True, "final_response": final_text or msg_text, "appeal_sent": appeal_text}
+
+            reply = _frozen_reply_for_message(msg_text)
+            if reply:
+                await send_progress("questionnaire", f"Replying: {reply[:40]}...")
+                send_r = await run_with_timeout(client.send_message(bot_entity, reply), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+                if send_r is TIMEOUT_SENTINEL:
+                    await client.disconnect()
+                    return {"success": False, "error": "Operation timed out", "final_response": None}
+                await asyncio.sleep(1.2)
+                continue
+
+            # Unmatched: might be "Please send me a text message" with different wording
+            if "text message" in msg_lower and "send" in msg_lower:
+                reply = random.choice(FROZEN_SHORT_MESSAGES)
+                await send_progress("questionnaire", "Sending text message...")
+                send_r = await run_with_timeout(client.send_message(bot_entity, reply), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+                if send_r is TIMEOUT_SENTINEL:
+                    await client.disconnect()
+                    return {"success": False, "error": "Operation timed out", "final_response": None}
+                await asyncio.sleep(1.2)
+
+        await client.disconnect()
+        return {"success": False, "error": "Questionnaire loop exceeded max steps", "final_response": None}
+    except Exception as e:
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+        logger.warning("[SESSION FAIL] %s frozen appeal error=%s", session_path, str(e))
+        logger.exception("submit_appeal_frozen failed")
         return {"success": False, "error": str(e), "final_response": None}
 
 
@@ -513,7 +719,11 @@ async def check_sessions_appeal_parallel(
                 "index": index,
             }
 
-    tasks = [task(s, i) for i, s in enumerate(sessions)]
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_SESSIONS)
+    async def sem_task(session_info: Dict[str, Any], index: int) -> Tuple[int, Dict[str, Any]]:
+        async with semaphore:
+            return await task(session_info, index)
+    tasks = [sem_task(s, i) for i, s in enumerate(sessions)]
     results_list = await asyncio.gather(*tasks, return_exceptions=True)
     results = {}
     for item in results_list:

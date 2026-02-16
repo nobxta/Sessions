@@ -4,7 +4,10 @@ from telethon.tl.types import DialogFilter, DialogFilterDefault, DialogFilterCha
 import asyncio
 from typing import List, Dict, Any
 from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
+from concurrency_config import MAX_CONCURRENT_SESSIONS
+import logging
 
+logger = logging.getLogger(__name__)
 API_ID = '25170767'
 API_HASH = 'd512fd74809a4ca3cd59078eef73afcd'
 
@@ -22,12 +25,14 @@ async def scan_chatlists_for_session(session_path: str) -> Dict[str, Any]:
     # Remove .session extension if present
     if session_path.endswith('.session'):
         session_path = session_path[:-8]
-    
+    logger.info("[SESSION START] %s", session_path)
     client = TelegramClient(session_path, API_ID, API_HASH)
     
     try:
+        logger.info("[SESSION ACTION] %s connect", session_path)
         r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if r is TIMEOUT_SENTINEL:
+            logger.warning("[SESSION FAIL] %s error=%s", session_path, "Connection timed out")
             return {
                 "success": False,
                 "session": session_path,
@@ -144,7 +149,7 @@ async def scan_chatlists_for_session(session_path: str) -> Dict[str, Any]:
                     folders.append(folder_info)
             
             await client.disconnect()
-            
+            logger.info("[SESSION END] %s success", session_path)
             return {
                 "success": True,
                 "session": session_path,
@@ -220,6 +225,7 @@ async def scan_chatlists_for_session(session_path: str) -> Dict[str, Any]:
             await client.disconnect()
         except:
             pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, str(e))
         return {
             "success": False,
             "session": session_path,
@@ -276,7 +282,11 @@ async def scan_chatlists_parallel(sessions: List[Dict[str, Any]], websocket=None
         
         return index, result
     
-    tasks = [scan_with_index(session_info, idx) for idx, session_info in enumerate(sessions)]
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_SESSIONS)
+    async def sem_task(session_info: Dict[str, Any], index: int):
+        async with semaphore:
+            return await scan_with_index(session_info, index)
+    tasks = [sem_task(session_info, idx) for idx, session_info in enumerate(sessions)]
     results_list = await asyncio.gather(*tasks, return_exceptions=True)
     
     # Handle exceptions
