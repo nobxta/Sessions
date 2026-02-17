@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Loader2, Save, CheckCircle2, XCircle } from 'lucide-react';
 import FileUpload from '@/components/FileUpload';
+import PageHelpLink from '@/components/PageHelpLink';
 import { API_BASE_URL } from '@/lib/config';
 
 export default function ChangeName() {
@@ -186,14 +187,16 @@ export default function ChangeName() {
 
       <div className="relative z-10 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
-          <button
-            onClick={() => router.push('/')}
-            className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors mb-6"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            <span className="text-sm">Back to Dashboard</span>
-          </button>
-          
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+            <button
+              onClick={() => router.push('/')}
+              className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span className="text-sm">Back to Dashboard</span>
+            </button>
+            <PageHelpLink href="/docs/name-bio-changer" />
+          </div>
           <div>
             <h1 className="text-3xl font-bold text-white mb-1">
               Change Name

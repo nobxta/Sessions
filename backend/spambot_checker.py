@@ -59,7 +59,8 @@ async def check_session_health_spambot(
     
     try:
         logger.info("[SESSION ACTION] %s connect", session_path)
-        r = await run_with_timeout(client.start(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        # Use non-interactive connect() to avoid Telethon prompting for phone input
+        r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if r is TIMEOUT_SENTINEL:
             try:
                 await client.disconnect()
@@ -76,7 +77,7 @@ async def check_session_health_spambot(
         if not is_auth:
             await client.disconnect()
             logger.warning("[SESSION FAIL] %s error=%s", session_path, "Session is not authorized")
-            return (SessionHealthStatus.FAILED, "Session is not authorized")
+            return (SessionHealthStatus.FAILED, "UNAUTHORIZED_SESSION")
         
         # Open chat with SpamBot (try multiple possible usernames)
         bot_entity = None
@@ -160,7 +161,14 @@ async def check_session_health_spambot(
         except:
             pass
         logger.warning("[SESSION FAIL] %s error=%s", session_path, "AUTH_KEY_UNREGISTERED")
-        return (SessionHealthStatus.FAILED, "AUTH_KEY_UNREGISTERED")
+        return (SessionHealthStatus.FAILED, "UNAUTHORIZED_SESSION")
+    except errors.SessionPasswordNeededError:
+        try:
+            await client.disconnect()
+        except:
+            pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, "SESSION_PASSWORD_NEEDED")
+        return (SessionHealthStatus.FAILED, "UNAUTHORIZED_SESSION")
     except errors.UserDeactivatedError:
         try:
             await client.disconnect()

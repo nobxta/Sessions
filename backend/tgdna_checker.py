@@ -55,7 +55,8 @@ async def check_session_age_tgdna(
     
     try:
         logger.info("[SESSION ACTION] %s connect", session_path)
-        r = await run_with_timeout(client.start(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        # Use non-interactive connect() to avoid Telethon prompting for phone input
+        r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if r is TIMEOUT_SENTINEL:
             try:
                 await client.disconnect()
@@ -68,7 +69,7 @@ async def check_session_age_tgdna(
         is_auth = await run_with_timeout(client.is_user_authorized(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if is_auth is TIMEOUT_SENTINEL or not is_auth:
             await client.disconnect()
-            result["error"] = "Session is not authorized" if is_auth is not TIMEOUT_SENTINEL else "Operation timed out"
+            result["error"] = "UNAUTHORIZED_SESSION" if is_auth is not TIMEOUT_SENTINEL else "Operation timed out"
             return result
         
         # Get current user info
@@ -214,7 +215,15 @@ async def check_session_age_tgdna(
         except:
             pass
         logger.warning("[SESSION FAIL] %s error=%s", session_path, "Session is not authorized")
-        result["error"] = "Session is not authorized"
+        result["error"] = "UNAUTHORIZED_SESSION"
+        return result
+    except errors.SessionPasswordNeededError:
+        try:
+            await client.disconnect()
+        except:
+            pass
+        logger.warning("[SESSION FAIL] %s error=%s", session_path, "SESSION_PASSWORD_NEEDED")
+        result["error"] = "UNAUTHORIZED_SESSION"
         return result
     except errors.UserBannedInChannel:
         try:

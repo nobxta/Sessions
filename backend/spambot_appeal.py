@@ -308,7 +308,8 @@ async def verify_temp_limited(
     results = []
     try:
         logger.info("[SESSION ACTION] %s connect", session_path)
-        r = await run_with_timeout(client.start(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        # Use non-interactive connect() to avoid Telethon prompting for phone input
+        r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if r is TIMEOUT_SENTINEL:
             try:
                 await client.disconnect()
@@ -318,7 +319,7 @@ async def verify_temp_limited(
         is_auth = await run_with_timeout(client.is_user_authorized(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if is_auth is TIMEOUT_SENTINEL or not is_auth:
             await client.disconnect()
-            return [{"status": STATUS_ERROR, "response": "Session not authorized" if is_auth is not TIMEOUT_SENTINEL else "Operation timed out"}]
+            return [{"status": STATUS_ERROR, "response": "UNAUTHORIZED_SESSION" if is_auth is not TIMEOUT_SENTINEL else "Operation timed out"}]
         bot_entity = None
         for uname in SPAMBOT_USERNAMES:
             try:
@@ -381,7 +382,8 @@ async def submit_appeal(
     client = TelegramClient(session_path, API_ID, API_HASH)
     try:
         logger.info("[SESSION ACTION] %s connect", session_path)
-        r = await run_with_timeout(client.start(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        # Use non-interactive connect() to avoid Telethon prompting for phone input
+        r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if r is TIMEOUT_SENTINEL:
             try:
                 await client.disconnect()
@@ -391,7 +393,7 @@ async def submit_appeal(
         is_auth = await run_with_timeout(client.is_user_authorized(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if is_auth is TIMEOUT_SENTINEL or not is_auth:
             await client.disconnect()
-            return {"success": False, "error": "Session not authorized" if is_auth is not TIMEOUT_SENTINEL else "Operation timed out", "final_response": None}
+            return {"success": False, "error": "UNAUTHORIZED_SESSION" if is_auth is not TIMEOUT_SENTINEL else "Operation timed out", "final_response": None}
         bot_entity = None
         for uname in SPAMBOT_USERNAMES:
             try:
@@ -528,7 +530,8 @@ async def submit_appeal_frozen(
     client = TelegramClient(session_path, API_ID, API_HASH)
     try:
         logger.info("[SESSION ACTION] %s connect", session_path)
-        r = await run_with_timeout(client.start(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
+        # Use non-interactive connect() to avoid Telethon prompting for phone input
+        r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if r is TIMEOUT_SENTINEL:
             try:
                 await client.disconnect()
@@ -538,7 +541,7 @@ async def submit_appeal_frozen(
         is_auth = await run_with_timeout(client.is_user_authorized(), API_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
         if is_auth is TIMEOUT_SENTINEL or not is_auth:
             await client.disconnect()
-            return {"success": False, "error": "Session not authorized" if is_auth is not TIMEOUT_SENTINEL else "Operation timed out", "final_response": None}
+            return {"success": False, "error": "UNAUTHORIZED_SESSION" if is_auth is not TIMEOUT_SENTINEL else "Operation timed out", "final_response": None}
         bot_entity = None
         for uname in SPAMBOT_USERNAMES:
             try:

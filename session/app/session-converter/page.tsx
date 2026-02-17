@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Loader2, CheckCircle2, XCircle, Copy, Download, FileText, Code, ArrowRightLeft } from 'lucide-react';
 import FileUpload from '@/components/FileUpload';
+import PageHelpLink from '@/components/PageHelpLink';
 import { API_BASE_URL } from '@/lib/config';
 
 export default function SessionConverter() {
@@ -194,13 +195,16 @@ export default function SessionConverter() {
 
       <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
-          <button
-            onClick={() => router.push('/')}
-            className="mb-4 flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            <span>Back to Dashboard</span>
-          </button>
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+            <button
+              onClick={() => router.push('/')}
+              className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>Back to Dashboard</span>
+            </button>
+            <PageHelpLink href="/docs/session-converter" />
+          </div>
           <h1 className="text-3xl font-bold text-white mb-2">Session Converter</h1>
           <p className="text-gray-400">Convert between session files and string format</p>
         </div>

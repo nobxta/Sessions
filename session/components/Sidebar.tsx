@@ -19,7 +19,9 @@ import {
   LayoutGrid,
   Sparkles,
   Lock,
-  Settings
+  Settings,
+  BookOpen,
+  Heart
 } from 'lucide-react';
 
 const Sidebar = ({ isMobileOpen = false, onClose }: { isMobileOpen?: boolean, onClose?: () => void }) => {
@@ -155,6 +157,24 @@ const Sidebar = ({ isMobileOpen = false, onClose }: { isMobileOpen?: boolean, on
           title: 'Settings',
           icon: Settings,
           path: '/settings'
+        }
+      ]
+    },
+    {
+      id: 'resources',
+      label: 'Resources',
+      items: [
+        {
+          id: 'docs',
+          title: 'Documentation & Guide',
+          icon: BookOpen,
+          path: '/docs'
+        },
+        {
+          id: 'about',
+          title: 'About HQAdz',
+          icon: Heart,
+          path: '/docs/about'
         }
       ]
     }

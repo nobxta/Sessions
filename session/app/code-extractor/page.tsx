@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Loader2, CheckCircle2, XCircle, Play, Square, Copy, Clock, Key, Lock } from 'lucide-react';
 import FileUpload from '@/components/FileUpload';
+import PageHelpLink from '@/components/PageHelpLink';
 import { API_BASE_URL, WS_BASE_URL } from '@/lib/config';
 
 export default function CodeExtractor() {
@@ -22,6 +23,7 @@ export default function CodeExtractor() {
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const startTimeRef = useRef<number | null>(null);
+  const activeSessionPathRef = useRef<string | null>(null);
 
   const handleFileSelect = async (selectedFiles: File[] | File | null) => {
     const fileArray = selectedFiles ? (Array.isArray(selectedFiles) ? selectedFiles : [selectedFiles]) : [];
@@ -149,6 +151,42 @@ export default function CodeExtractor() {
     }
   };
 
+  const cleanupListeningState = () => {
+    setIsListening(false);
+    setIsStartingScan(false);
+    setSuccess(null);
+    startTimeRef.current = null;
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  const stopCurrentListener = (sendStopSignal: boolean) => {
+    const ws = wsRef.current;
+    wsRef.current = null;
+    activeSessionPathRef.current = null;
+
+    if (ws) {
+      try {
+        if (sendStopSignal && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'stop' }));
+        }
+      } catch {
+        // Ignore errors
+      }
+      try {
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
+        }
+      } catch {
+        // Ignore errors
+      }
+    }
+
+    cleanupListeningState();
+  };
+
   const handleStartListening = (session: any) => {
     if (!session) {
       setError('Please select a session first');
@@ -156,8 +194,17 @@ export default function CodeExtractor() {
     }
 
     // Prevent double-click spam
-    if (isStartingScan || (isListening && selectedSession?.path === session.path)) {
+    if (isStartingScan) {
       return;
+    }
+
+    if (activeSessionPathRef.current === session.path && isListening) {
+      return;
+    }
+
+    // Switch behavior: always stop previous session before starting the new one
+    if (wsRef.current) {
+      stopCurrentListener(true);
     }
 
     setIsStartingScan(true);
@@ -180,6 +227,7 @@ export default function CodeExtractor() {
 
     const ws = new WebSocket(`${WS_BASE_URL}/ws/listen-codes`);
     wsRef.current = ws;
+    activeSessionPathRef.current = session.path;
 
     ws.onopen = () => {
       ws.send(JSON.stringify({
@@ -206,46 +254,29 @@ export default function CodeExtractor() {
 
         case 'error':
           setError(message.message);
-          handleStopListening();
+          stopCurrentListener(false);
           break;
 
         case 'stopped':
-          handleStopListening();
+          stopCurrentListener(false);
           break;
       }
     };
 
     ws.onerror = () => {
       setError('WebSocket connection error');
-      setIsStartingScan(false);
-      handleStopListening();
+      stopCurrentListener(false);
     };
 
     ws.onclose = () => {
-      wsRef.current = null;
-      if (isListening) {
-        handleStopListening();
+      if (wsRef.current === ws) {
+        stopCurrentListener(false);
       }
     };
   };
 
   const handleStopListening = () => {
-    setIsListening(false);
-    setIsStartingScan(false);
-    setSuccess(null);
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    if (wsRef.current) {
-      try {
-        wsRef.current.send(JSON.stringify({ type: 'stop' }));
-        wsRef.current.close();
-      } catch {
-        // Ignore errors
-      }
-      wsRef.current = null;
-    }
+    stopCurrentListener(true);
   };
 
   const handleCopyCode = (code: string) => {
@@ -275,24 +306,21 @@ export default function CodeExtractor() {
 
   useEffect(() => {
     return () => {
-      if (wsRef.current) {
-        try {
-          wsRef.current.close();
-        } catch {
-          // Ignore
-        }
-      }
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
+      stopCurrentListener(false);
     };
   }, []);
 
   useEffect(() => {
-    if (isListening && selectedSession) {
-      handleStopListening();
-    }
-  }, [selectedSession]);
+    const onPageClose = () => {
+      stopCurrentListener(false);
+    };
+    window.addEventListener('beforeunload', onPageClose);
+    window.addEventListener('pagehide', onPageClose);
+    return () => {
+      window.removeEventListener('beforeunload', onPageClose);
+      window.removeEventListener('pagehide', onPageClose);
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-[#0a0a0f]">
@@ -305,13 +333,16 @@ export default function CodeExtractor() {
 
       <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <div className="mb-6">
-          <button
-            onClick={() => router.push('/')}
-            className="mb-3 flex items-center gap-2 text-gray-400 hover:text-white transition-colors text-sm"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            <span>Back to Dashboard</span>
-          </button>
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <button
+              onClick={() => router.push('/')}
+              className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors text-sm"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>Back to Dashboard</span>
+            </button>
+            <PageHelpLink href="/docs/code-extractor" />
+          </div>
           <h1 className="text-2xl sm:text-3xl font-bold text-white mb-1">Login / Auth Code Extractor</h1>
           <p className="text-gray-400 text-sm">Listen for incoming Telegram login and auth codes</p>
         </div>
