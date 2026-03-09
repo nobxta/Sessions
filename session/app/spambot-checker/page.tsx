@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Loader2, CheckCircle2, XCircle, Play, Shield, AlertTriangle, Clock, Ban } from 'lucide-react';
+import { ArrowLeft, Loader2, CheckCircle2, XCircle, Play, Shield, AlertTriangle, Clock, Ban, Download } from 'lucide-react';
 import FileUpload from '@/components/FileUpload';
 import PageHelpLink from '@/components/PageHelpLink';
 import { API_BASE_URL } from '@/lib/config';
@@ -180,6 +180,25 @@ export default function SpamBotChecker() {
   const frozenCount = checkResults.filter(r => r.status === 'FROZEN').length;
   const failedCount = checkResults.filter(r => r.status === 'FAILED').length;
 
+  const getSessionNamesByStatus = (status: string): string[] => {
+    return checkResults
+      .map((r, i) => (r.status === status ? extractedSessions[i]?.name : null))
+      .filter((n): n is string => typeof n === 'string');
+  };
+
+  const downloadByStatus = (status: string, filename: string) => {
+    const names = getSessionNamesByStatus(status);
+    if (names.length === 0) return;
+    const content = names.join('\n');
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="min-h-screen bg-[#0a0a0f]">
       <div className="fixed inset-0 opacity-[0.02] pointer-events-none">
@@ -253,6 +272,61 @@ export default function SpamBotChecker() {
                   </div>
                 </div>
               )}
+            </div>
+            <div className="mt-4 pt-4 border-t border-white/10">
+              <div className="text-sm text-gray-400 mb-3">Download session list by status (one name per line)</div>
+              <div className="flex flex-wrap gap-2">
+                {activeCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => downloadByStatus('ACTIVE', 'active_accounts.txt')}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-green-500/10 border border-green-500/30 text-green-400 hover:bg-green-500/20 text-sm font-medium transition-colors"
+                  >
+                    <Download className="w-4 h-4" />
+                    Active ({activeCount})
+                  </button>
+                )}
+                {tempLimitedCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => downloadByStatus('TEMP_LIMITED', 'temp_limited_accounts.txt')}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/20 text-sm font-medium transition-colors"
+                  >
+                    <Download className="w-4 h-4" />
+                    Temp Limited ({tempLimitedCount})
+                  </button>
+                )}
+                {hardLimitedCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => downloadByStatus('HARD_LIMITED', 'spam_limited_accounts.txt')}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-400 hover:bg-orange-500/20 text-sm font-medium transition-colors"
+                  >
+                    <Download className="w-4 h-4" />
+                    Spam Limited ({hardLimitedCount})
+                  </button>
+                )}
+                {frozenCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => downloadByStatus('FROZEN', 'frozen_accounts.txt')}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 text-sm font-medium transition-colors"
+                  >
+                    <Download className="w-4 h-4" />
+                    Frozen ({frozenCount})
+                  </button>
+                )}
+                {failedCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => downloadByStatus('FAILED', 'failed_accounts.txt')}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-500/10 border border-gray-500/30 text-gray-400 hover:bg-gray-500/20 text-sm font-medium transition-colors"
+                  >
+                    <Download className="w-4 h-4" />
+                    Failed ({failedCount})
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )}
