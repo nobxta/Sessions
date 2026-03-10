@@ -1445,6 +1445,57 @@ async def check_spambot(request: Request):
         logger.info("[END] check_spambot request_id=%s duration=%.2fs", request_id, time.perf_counter() - _inv_start)
 
 
+@app.post("/api/export-sessions-by-status")
+async def export_sessions_by_status(request: Request):
+    """
+    Export session files for a given SpamBot status as a ZIP.
+    Body: { "sessions": [{ name, path }, ...], "results": [{ status, ... }, ...], "status": "ACTIVE" }.
+    Returns ZIP with .session files named by session name.
+    """
+    from fastapi.responses import Response
+    data = await request.json()
+    sessions = data.get("sessions", [])
+    results = data.get("results", [])
+    status_filter = data.get("status")
+    if not status_filter:
+        raise HTTPException(status_code=400, detail="status is required")
+    if len(sessions) != len(results):
+        raise HTTPException(status_code=400, detail="sessions and results length must match")
+    # Collect (name, path) for sessions matching status
+    to_export = []
+    for i, res in enumerate(results):
+        if res.get("status") != status_filter:
+            continue
+        session = sessions[i] if i < len(sessions) else {}
+        path = session.get("path") or session.get("name")
+        name = session.get("name") or ("session_%d" % i)
+        if not path:
+            continue
+        to_export.append((name, path))
+    if not to_export:
+        raise HTTPException(status_code=400, detail=f"No sessions with status {status_filter}")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, path in to_export:
+            # Path may be with or without .session
+            if os.path.isfile(path):
+                fpath = path
+            elif os.path.isfile(path + ".session"):
+                fpath = path + ".session"
+            else:
+                logger.warning("[export-sessions-by-status] file not found: %s", path)
+                continue
+            arcname = name if name.endswith(".session") else (name + ".session")
+            zf.write(fpath, arcname=arcname)
+    buf.seek(0)
+    filename = status_filter.lower().replace("_", "-") + "-accounts.zip"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.post("/api/check-spambot-appeal")
 async def check_spambot_appeal_endpoint(request: Request):
     """
