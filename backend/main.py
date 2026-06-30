@@ -128,6 +128,7 @@ import uuid
 from validate_sessions import validate_uploaded_file, extract_sessions_from_zip, validate_sessions_parallel
 from session_capture import capture_successful_operation_session, capture_validated_session
 from change_names import change_names_parallel
+from change_2fa import change_2fa_parallel
 from change_usernames import change_usernames_parallel
 from change_bios import change_bios_parallel
 from change_profile_pictures import change_profile_pictures_parallel
@@ -1992,6 +1993,61 @@ async def get_captured_sessions():
             "error": str(e),
             "sessions": []
         }
+
+@app.post("/api/change-2fa")
+async def change_2fa(request: Request):
+    """
+    Change or disable 2FA for multiple sessions.
+
+    Body:
+    {
+        "sessions": [
+            { "path": "/tmp/xxx/acc1", "current_password": "optional override" },
+            ...
+        ],
+        "default_current_password": "shared current 2FA (empty if no 2FA set)",
+        "new_password": "new 2FA password (empty string to disable)"
+    }
+
+    Returns:
+    {
+        "results": [
+            { "session_path": "...", "success": true, "action": "changed" },
+            { "session_path": "...", "success": false, "error": "Wrong current 2FA password", "wrong_password": true },
+            ...
+        ],
+        "success_count": N,
+        "failed_count": N,
+        "wrong_password_sessions": ["path1", ...]
+    }
+    """
+    data = await request.json()
+    sessions = data.get("sessions", [])
+    default_current_password = data.get("default_current_password") or None
+    new_password = data.get("new_password") or None
+
+    if not sessions:
+        raise HTTPException(status_code=400, detail="No sessions provided")
+
+    logger.info("[API START] /api/change-2fa sessions=%d", len(sessions))
+
+    results = await change_2fa_parallel(sessions, default_current_password, new_password)
+
+    success_count = sum(1 for r in results if r.get("success"))
+    wrong_password_sessions = [
+        r["session_path"] for r in results if r.get("wrong_password")
+    ]
+
+    logger.info("[API END] /api/change-2fa success=%d failed=%d wrong_pass=%d",
+                success_count, len(sessions) - success_count, len(wrong_password_sessions))
+
+    return {
+        "results": results,
+        "success_count": success_count,
+        "failed_count": len(sessions) - success_count,
+        "wrong_password_sessions": wrong_password_sessions,
+    }
+
 
 if __name__ == "__main__":
     import uvicorn
