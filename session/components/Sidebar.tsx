@@ -19,6 +19,7 @@ import {
   LayoutGrid,
   Sparkles,
   Lock,
+  KeyRound,
   Settings,
   BookOpen,
   Heart
@@ -109,6 +110,12 @@ const Sidebar = ({ isMobileOpen = false, onClose }: { isMobileOpen?: boolean, on
           title: 'Privacy Settings',
           icon: Lock,
           path: '/privacy-settings'
+        },
+        {
+          id: 'change-2fa',
+          title: 'Change 2FA',
+          icon: KeyRound,
+          path: '/change-2fa'
         }
       ]
     },
