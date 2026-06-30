@@ -72,16 +72,16 @@ def _start_cloudflare_tunnel():
         sys.exit(1)
     CREDS_FILE = creds_files[0]
 
-    # Write config once
-    if not CONFIG_FILE.exists():
-        CONFIG_FILE.write_text(
-            f"tunnel: {TUNNEL_NAME}\n"
-            f"credentials-file: {CREDS_FILE.resolve()}\n\n"
-            f"ingress:\n"
-            f"  - hostname: {TUNNEL_DOMAIN}\n"
-            f"    service: http://localhost:{APP_PORT}\n"
-            f"  - service: http_status:404\n"
-        )
+    # Always write config to ensure correct credentials path
+    CONFIG_FILE.write_text(
+        f"tunnel: {TUNNEL_NAME}\n"
+        f"credentials-file: {CREDS_FILE.resolve()}\n\n"
+        f"ingress:\n"
+        f"  - hostname: {TUNNEL_DOMAIN}\n"
+        f"    service: http://localhost:{APP_PORT}\n"
+        f"  - service: http_status:404\n"
+    )
+    print(f"[tunnel] Config written with creds: {CREDS_FILE.name}")
 
     # Set DNS route
     r = subprocess.run(
