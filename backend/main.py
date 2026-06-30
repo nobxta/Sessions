@@ -15,11 +15,12 @@ def _start_cloudflare_tunnel():
     TUNNEL_NAME   = "sessionn-backend"
     TUNNEL_DOMAIN = "api.sessionn.in"
     APP_PORT      = int(os.environ.get("APP_PORT", os.environ.get("SERVER_PORT", 3000)))
-    CF_DIR        = Path(".cloudflared")
+    BASE_DIR      = Path(__file__).resolve().parent
+    CF_DIR        = BASE_DIR / ".cloudflared"
     CERT_FILE     = CF_DIR / "cert.pem"
     CREDS_FILE    = CF_DIR / f"{TUNNEL_NAME}.json"
     CONFIG_FILE   = CF_DIR / "config.yml"
-    CF_BIN        = Path("./cloudflared")
+    CF_BIN        = BASE_DIR / "cloudflared"
 
     # Download binary if missing
     if not CF_BIN.exists():
