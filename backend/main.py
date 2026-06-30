@@ -1992,3 +1992,8 @@ async def get_captured_sessions():
             "error": str(e),
             "sessions": []
         }
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("APP_PORT", os.environ.get("SERVER_PORT", 3000)))
+    uvicorn.run(app, host="0.0.0.0", port=port)
