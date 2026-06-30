@@ -18,7 +18,6 @@ def _start_cloudflare_tunnel():
     BASE_DIR      = Path(__file__).resolve().parent
     CF_DIR        = Path.home() / ".cloudflared"
     CERT_FILE     = CF_DIR / "cert.pem"
-    CREDS_FILE    = CF_DIR / f"{TUNNEL_NAME}.json"
     CONFIG_FILE   = CF_DIR / "config.yml"
     CF_BIN        = BASE_DIR / "cloudflared"
 
@@ -59,10 +58,19 @@ def _start_cloudflare_tunnel():
             sys.exit(1)
         print("[tunnel] Authorized!\n")
 
-    # Create tunnel once
-    if not CREDS_FILE.exists():
-        print(f"[tunnel] Creating tunnel '{TUNNEL_NAME}'...")
-        subprocess.run([str(CF_BIN), "tunnel", "create", TUNNEL_NAME], check=True)
+    # Create tunnel (safe if already exists)
+    print(f"[tunnel] Creating tunnel '{TUNNEL_NAME}'...")
+    r = subprocess.run([str(CF_BIN), "tunnel", "create", TUNNEL_NAME], capture_output=True, text=True)
+    if r.returncode != 0 and "already exists" not in r.stderr:
+        print(f"[tunnel] Error: {r.stderr.strip()}")
+        sys.exit(1)
+
+    # Find credentials file — cloudflared saves it as <uuid>.json
+    creds_files = [f for f in CF_DIR.glob("*.json") if f.name != "config.json"]
+    if not creds_files:
+        print("[tunnel] No credentials file found. Delete ~/.cloudflared and restart.")
+        sys.exit(1)
+    CREDS_FILE = creds_files[0]
 
     # Write config once
     if not CONFIG_FILE.exists():
