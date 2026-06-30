@@ -149,6 +149,7 @@ from spambot_appeal import check_sessions_appeal_parallel, submit_appeal, submit
 from job_manager import job_manager
 from job_executor import job_executor
 from ws_manager import ws_manager
+from cancellation import register_token, cancel_token, release_token
 
 logging.basicConfig(
     level=logging.INFO,
@@ -185,6 +186,37 @@ app.add_middleware(
 async def startup():
     job_manager.max_concurrent_jobs = 5
     job_executor.max_concurrent_sessions = 10
+
+
+@app.post("/api/cancel/{token_id}")
+async def cancel_operation(token_id: str):
+    """Cancel any in-flight batch operation identified by cancel_token."""
+    cancelled = cancel_token(token_id)
+    return {"cancelled": cancelled}
+
+
+async def _run_with_disconnect_guard(request: Request, cancel_event, coro):
+    """
+    Run `coro` as a Task and cancel it (via cancel_event) if the HTTP client
+    disconnects before the operation finishes.
+    """
+    task = asyncio.create_task(coro)
+
+    async def _watch():
+        while not task.done():
+            try:
+                if await request.is_disconnected():
+                    cancel_event.set()
+                    return
+            except Exception:
+                return
+            await asyncio.sleep(1)
+
+    watcher = asyncio.create_task(_watch())
+    try:
+        return await task
+    finally:
+        watcher.cancel()
 
 
 @app.get("/")
@@ -518,9 +550,17 @@ async def change_usernames(request: Request):
         logger.info("[FLOW] change_usernames sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
-        
-        # Change usernames in parallel
-        results = await change_usernames_parallel(sessions)
+
+        cancel_id = data.get("cancel_token", "")
+        cancel_ev = register_token(cancel_id) if cancel_id else None
+        try:
+            results = await _run_with_disconnect_guard(
+                request, cancel_ev or asyncio.Event(),
+                change_usernames_parallel(sessions, cancel_event=cancel_ev)
+            )
+        finally:
+            if cancel_id:
+                release_token(cancel_id)
         success_count = sum(1 for r in (results.values() or []) if isinstance(r, dict) and r.get("success"))
         logger.info("[FLOW] change_usernames done success=%s total=%s", success_count, len(sessions))
         # Capture successful sessions (results is dict {idx: result})
@@ -634,9 +674,17 @@ async def change_bios(request: Request):
         logger.info("[FLOW] change_bios sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
-        
-        # Change bios in parallel
-        results = await change_bios_parallel(sessions)
+
+        cancel_id = data.get("cancel_token", "")
+        cancel_ev = register_token(cancel_id) if cancel_id else None
+        try:
+            results = await _run_with_disconnect_guard(
+                request, cancel_ev or asyncio.Event(),
+                change_bios_parallel(sessions, cancel_event=cancel_ev)
+            )
+        finally:
+            if cancel_id:
+                release_token(cancel_id)
         success_count = sum(1 for r in (results.values() or []) if isinstance(r, dict) and r.get("success"))
         logger.info("[FLOW] change_bios done success=%s total=%s", success_count, len(sessions))
         # Capture successful sessions (results is dict {idx: result})
@@ -685,9 +733,17 @@ async def change_names(request: Request):
         for session in sessions:
             if not session.get("new_first_name") or not session.get("new_first_name").strip():
                 raise HTTPException(status_code=400, detail="All sessions must have a new first name")
-        
-        # Change names in parallel
-        results = await change_names_parallel(sessions)
+
+        cancel_id = data.get("cancel_token", "")
+        cancel_ev = register_token(cancel_id) if cancel_id else None
+        try:
+            results = await _run_with_disconnect_guard(
+                request, cancel_ev or asyncio.Event(),
+                change_names_parallel(sessions, cancel_event=cancel_ev)
+            )
+        finally:
+            if cancel_id:
+                release_token(cancel_id)
         success_count = sum(1 for r in (results.values() or []) if isinstance(r, dict) and r.get("success"))
         logger.info("[FLOW] change_names done success=%s total=%s", success_count, len(sessions))
         # Capture successful sessions (results is dict {idx: result})
@@ -1478,9 +1534,17 @@ async def check_tgdna(request: Request):
         logger.info("[FLOW] check_tgdna sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
-        
-        # Check sessions in parallel
-        results = await check_sessions_age_parallel(sessions)
+
+        cancel_id = data.get("cancel_token", "")
+        cancel_ev = register_token(cancel_id) if cancel_id else None
+        try:
+            results = await _run_with_disconnect_guard(
+                request, cancel_ev or asyncio.Event(),
+                check_sessions_age_parallel(sessions, cancel_event=cancel_ev)
+            )
+        finally:
+            if cancel_id:
+                release_token(cancel_id)
         success_count = sum(1 for r in (results.values() or []) if isinstance(r, dict) and r.get("success"))
         logger.info("[FLOW] check_tgdna done success=%s total=%s", success_count, len(sessions))
         # Convert results to list format for frontend
@@ -1523,9 +1587,17 @@ async def check_spambot(request: Request):
         logger.info("[FLOW] check_spambot request_id=%s sessions=%s", request_id, len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
-        
-        # Check sessions in parallel
-        results = await check_sessions_health_parallel(sessions)
+
+        cancel_id = data.get("cancel_token", "")
+        cancel_ev = register_token(cancel_id) if cancel_id else None
+        try:
+            results = await _run_with_disconnect_guard(
+                request, cancel_ev or asyncio.Event(),
+                check_sessions_health_parallel(sessions, cancel_event=cancel_ev)
+            )
+        finally:
+            if cancel_id:
+                release_token(cancel_id)
         success_count = sum(1 for r in (results.values() or []) if isinstance(r, dict) and r.get("success"))
         logger.info("[FLOW] check_spambot done request_id=%s success=%s total=%s duration=%.2fs", request_id, success_count, len(sessions), time.perf_counter() - _inv_start)
         # Convert results to list format for frontend
@@ -1623,7 +1695,17 @@ async def check_spambot_appeal_endpoint(request: Request):
         logger.info("[FLOW] check_spambot_appeal sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
-        results = await check_sessions_appeal_parallel(sessions)
+
+        cancel_id = data.get("cancel_token", "")
+        cancel_ev = register_token(cancel_id) if cancel_id else None
+        try:
+            results = await _run_with_disconnect_guard(
+                request, cancel_ev or asyncio.Event(),
+                check_sessions_appeal_parallel(sessions)
+            )
+        finally:
+            if cancel_id:
+                release_token(cancel_id)
         results_list = [results[i] for i in sorted(results.keys())]
         logger.info("[FLOW] check_spambot_appeal done results=%s", len(results_list))
         logger.info("[API END] /api/check-spambot-appeal completed")
@@ -1706,9 +1788,17 @@ async def get_session_metadata(request: Request):
         logger.info("[FLOW] session_metadata sessions=%s", len(sessions))
         if not sessions:
             raise HTTPException(status_code=400, detail="No sessions provided")
-        
-        # Extract metadata in parallel
-        results = await extract_metadata_parallel(sessions)
+
+        cancel_id = data.get("cancel_token", "")
+        cancel_ev = register_token(cancel_id) if cancel_id else None
+        try:
+            results = await _run_with_disconnect_guard(
+                request, cancel_ev or asyncio.Event(),
+                extract_metadata_parallel(sessions)
+            )
+        finally:
+            if cancel_id:
+                release_token(cancel_id)
         success_count = sum(1 for r in (results.values() or []) if isinstance(r, dict) and r.get("success"))
         logger.info("[FLOW] session_metadata done success=%s total=%s", success_count, len(sessions))
         logger.info("[API END] /api/session-metadata completed")
@@ -1946,9 +2036,17 @@ async def apply_privacy_settings(request: Request):
                 raise HTTPException(status_code=400, detail="All sessions must have a path")
             if "settings" not in session or not isinstance(session["settings"], dict):
                 raise HTTPException(status_code=400, detail="All sessions must have a settings dict")
-        
-        # Apply privacy settings in parallel
-        results = await apply_privacy_settings_parallel(sessions)
+
+        cancel_id = data.get("cancel_token", "")
+        cancel_ev = register_token(cancel_id) if cancel_id else None
+        try:
+            results = await _run_with_disconnect_guard(
+                request, cancel_ev or asyncio.Event(),
+                apply_privacy_settings_parallel(sessions, cancel_event=cancel_ev)
+            )
+        finally:
+            if cancel_id:
+                release_token(cancel_id)
         success_count = sum(1 for r in (results.values() or []) if isinstance(r, dict) and r.get("success"))
         logger.info("[FLOW] privacy_settings done success=%s total=%s", success_count, len(sessions))
         # Capture successful sessions (results is dict {idx: result})
@@ -2031,7 +2129,16 @@ async def change_2fa(request: Request):
 
     logger.info("[API START] /api/change-2fa sessions=%d", len(sessions))
 
-    results = await change_2fa_parallel(sessions, default_current_password, new_password)
+    cancel_id = data.get("cancel_token", "")
+    cancel_ev = register_token(cancel_id) if cancel_id else None
+    try:
+        results = await _run_with_disconnect_guard(
+            request, cancel_ev or asyncio.Event(),
+            change_2fa_parallel(sessions, default_current_password, new_password, cancel_event=cancel_ev)
+        )
+    finally:
+        if cancel_id:
+            release_token(cancel_id)
 
     success_count = sum(1 for r in results if r.get("success"))
     wrong_password_sessions = [

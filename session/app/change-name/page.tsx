@@ -6,9 +6,11 @@ import { ArrowLeft, Loader2, Save, CheckCircle2, XCircle } from 'lucide-react';
 import FileUpload from '@/components/FileUpload';
 import PageHelpLink from '@/components/PageHelpLink';
 import { API_BASE_URL } from '@/lib/config';
+import { useSessionCleanup } from '@/hooks/useSessionCleanup';
 
 export default function ChangeName() {
   const router = useRouter();
+  const { newRequest, cancelToken, clearToken } = useSessionCleanup();
   const [files, setFiles] = useState<File[]>([]);
   const [extractedSessions, setExtractedSessions] = useState<any[]>([]);
   const [extractionData, setExtractionData] = useState<any>(null);
@@ -137,17 +139,20 @@ export default function ChangeName() {
     setResults({});
 
     try {
+      const signal = newRequest();
       const updateData = {
         sessions: extractedSessions.map((session, index) => ({
           name: session.name,
           path: session.path,
           new_first_name: nameInputs[index]?.trim() || ''
         })),
-        extraction_data: extractionData
+        extraction_data: extractionData,
+        cancel_token: cancelToken,
       };
 
       const response = await fetch(`${API_BASE_URL}/api/change-names`, {
         method: 'POST',
+        signal,
         headers: {
           'Content-Type': 'application/json',
         },
@@ -161,8 +166,11 @@ export default function ChangeName() {
 
       const data = await response.json();
       setResults(data.results || {});
+      clearToken();
     } catch (err: any) {
-      setError(err.message || 'Failed to update names');
+      if ((err as any)?.name !== 'AbortError') {
+        setError(err.message || 'Failed to update names');
+      }
     } finally {
       setIsUpdating(false);
     }

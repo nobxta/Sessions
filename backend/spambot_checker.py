@@ -238,13 +238,14 @@ def classify_spambot_response(response_text: str) -> Tuple[str, Optional[str]]:
     return (SessionHealthStatus.UNKNOWN, excerpt)
 
 
-async def check_sessions_health_parallel(sessions: list) -> Dict[int, Dict[str, Any]]:
+async def check_sessions_health_parallel(sessions: list, cancel_event=None) -> Dict[int, Dict[str, Any]]:
     """
     Check health status for multiple sessions in parallel.
-    
+
     Args:
         sessions: List of session dicts with 'path' key
-    
+        cancel_event: optional asyncio.Event; when set, pending sessions are skipped
+
     Returns:
         Dict mapping session index to check result
     """
@@ -258,7 +259,7 @@ async def check_sessions_health_parallel(sessions: list) -> Dict[int, Dict[str, 
                 "details": "No session path provided",
                 "index": index
             }
-        
+
         status, details = await check_session_health_spambot(session_path)
         return index, {
             "success": status != SessionHealthStatus.FAILED,
@@ -267,10 +268,16 @@ async def check_sessions_health_parallel(sessions: list) -> Dict[int, Dict[str, 
             "details": details,
             "index": index
         }
-    
+
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_SESSIONS)
     async def sem_task(session_info: Dict[str, Any], index: int):
+        if cancel_event and cancel_event.is_set():
+            path = session_info.get("path", "unknown")
+            return index, {"success": False, "cancelled": True, "session": path, "status": SessionHealthStatus.FAILED, "details": "Cancelled", "index": index}
         async with semaphore:
+            if cancel_event and cancel_event.is_set():
+                path = session_info.get("path", "unknown")
+                return index, {"success": False, "cancelled": True, "session": path, "status": SessionHealthStatus.FAILED, "details": "Cancelled", "index": index}
             return await check_with_index(session_info, index)
     tasks = [sem_task(session_info, idx) for idx, session_info in enumerate(sessions)]
     results_list = await asyncio.gather(*tasks, return_exceptions=True)

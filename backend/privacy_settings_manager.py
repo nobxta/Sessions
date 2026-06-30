@@ -216,39 +216,45 @@ async def apply_privacy_settings_for_session(
 
 
 async def apply_privacy_settings_parallel(
-    sessions: List[Dict[str, Any]]
+    sessions: List[Dict[str, Any]],
+    cancel_event=None,
 ) -> Dict[int, Dict[str, Any]]:
     """
     Apply privacy settings to multiple sessions in parallel.
-    
+
     Args:
         sessions: List of dicts, each containing:
             - path: session file path
             - settings: dict of privacy key names to privacy value names
-    
+        cancel_event: optional asyncio.Event; when set, pending sessions are skipped
+
     Returns:
         dict: Results indexed by session index
     """
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_SESSIONS)
     async def run_with_sem(session_path: str, settings: Dict[str, Any]):
+        if cancel_event and cancel_event.is_set():
+            return {"success": False, "cancelled": True, "session_path": session_path}
         async with semaphore:
+            if cancel_event and cancel_event.is_set():
+                return {"success": False, "cancelled": True, "session_path": session_path}
             return await apply_privacy_settings_for_session(session_path, settings)
     tasks = []
     for idx, session in enumerate(sessions):
         session_path = session.get("path")
         settings = session.get("settings", {})
-        
+
         if not session_path:
             continue
-        
+
         task = run_with_sem(session_path, settings)
         tasks.append((idx, task))
-    
+
     # Execute all tasks concurrently
     results = {}
     if tasks:
         task_results = await asyncio.gather(*[task for _, task in tasks], return_exceptions=True)
-        
+
         for (idx, _), result in zip(tasks, task_results):
             if isinstance(result, Exception):
                 session_path = sessions[idx].get("path", "unknown")
@@ -259,6 +265,6 @@ async def apply_privacy_settings_parallel(
                 }
             else:
                 results[idx] = result
-    
+
     return results
 

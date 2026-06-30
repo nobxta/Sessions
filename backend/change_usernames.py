@@ -156,35 +156,40 @@ async def change_username_for_session(session_path: str, new_username: str) -> D
         }
 
 
-async def change_usernames_parallel(sessions: List[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
+async def change_usernames_parallel(sessions: List[Dict[str, Any]], cancel_event=None) -> Dict[int, Dict[str, Any]]:
     """
     Change usernames for multiple sessions in parallel
-    
+
     Args:
         sessions: List of dicts with 'path' and 'new_username'
-    
+        cancel_event: optional asyncio.Event; when set, pending sessions are skipped
+
     Returns:
         dict: Results indexed by session index
     """
     async def change_username_with_index(path: str, username: str, index: int):
         result = await change_username_for_session(path, username)
         return index, result
-    
+
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_SESSIONS)
     async def sem_task(path: str, username: str, index: int):
+        if cancel_event and cancel_event.is_set():
+            return index, {"success": False, "cancelled": True, "session_path": path}
         async with semaphore:
+            if cancel_event and cancel_event.is_set():
+                return index, {"success": False, "cancelled": True, "session_path": path}
             return await change_username_with_index(path, username, index)
     tasks = []
     for idx, session_info in enumerate(sessions):
         session_path = session_info.get("path") or session_info.get("name", "")
         new_username = session_info.get("new_username", "")
         tasks.append(sem_task(session_path, new_username, idx))
-    
+
     # Run all updates in parallel
     results_list = await asyncio.gather(*tasks)
-    
+
     # Convert to dict indexed by session index
     results = {index: result for index, result in results_list}
-    
+
     return results
 

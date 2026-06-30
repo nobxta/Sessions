@@ -6,6 +6,7 @@ import { ArrowLeft, Loader2, Save, CheckCircle2, XCircle, Lock, AlertTriangle } 
 import FileUpload from '@/components/FileUpload';
 import PageHelpLink from '@/components/PageHelpLink';
 import { API_BASE_URL } from '@/lib/config';
+import { useSessionCleanup } from '@/hooks/useSessionCleanup';
 
 const PRIVACY_SETTINGS = [
   {
@@ -48,6 +49,7 @@ const PRIVACY_OPTIONS = [
 
 export default function PrivacySettings() {
   const router = useRouter();
+  const { newRequest, cancelToken, clearToken } = useSessionCleanup();
   const [files, setFiles] = useState<File[]>([]);
   const [extractedSessions, setExtractedSessions] = useState<any[]>([]);
   const [extractionData, setExtractionData] = useState<any>(null);
@@ -159,12 +161,14 @@ export default function PrivacySettings() {
         settings: settings
       }));
 
+      const signal = newRequest();
       const response = await fetch(`${API_BASE_URL}/api/privacy-settings`, {
         method: 'POST',
+        signal,
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ sessions }),
+        body: JSON.stringify({ sessions, cancel_token: cancelToken }),
       });
 
       if (!response.ok) {
@@ -174,8 +178,9 @@ export default function PrivacySettings() {
 
       const data = await response.json();
       setResults(data.results || []);
+      clearToken();
     } catch (err: any) {
-      setError(err.message || 'Failed to apply privacy settings');
+      if ((err as any)?.name !== 'AbortError') setError(err.message || 'Failed to apply privacy settings');
     } finally {
       setIsApplying(false);
     }

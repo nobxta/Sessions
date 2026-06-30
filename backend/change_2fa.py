@@ -91,6 +91,7 @@ async def change_2fa_parallel(
     sessions: List[Dict[str, Any]],
     default_current_password: Optional[str],
     new_password: Optional[str],
+    cancel_event=None,
 ) -> List[Dict[str, Any]]:
     """
     Change 2FA for multiple sessions in parallel.
@@ -99,14 +100,19 @@ async def change_2fa_parallel(
       - path: str
       - current_password: str (optional, overrides default_current_password for this session)
 
+    cancel_event: optional asyncio.Event; when set, pending sessions are skipped
     Returns list of result dicts with session_path, success, error, wrong_password.
     """
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_SESSIONS)
 
     async def process(session: dict) -> Dict[str, Any]:
         path = session.get("path") or session.get("name", "")
+        if cancel_event and cancel_event.is_set():
+            return {"success": False, "cancelled": True, "session_path": path}
         cur_pass = session.get("current_password") or default_current_password or None
         async with semaphore:
+            if cancel_event and cancel_event.is_set():
+                return {"success": False, "cancelled": True, "session_path": path}
             return await change_2fa_for_session(path, cur_pass, new_password)
 
     results = await asyncio.gather(*[process(s) for s in sessions])

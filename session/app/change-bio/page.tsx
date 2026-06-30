@@ -6,9 +6,11 @@ import { ArrowLeft, Loader2, Save, CheckCircle2, XCircle } from 'lucide-react';
 import FileUpload from '@/components/FileUpload';
 import PageHelpLink from '@/components/PageHelpLink';
 import { API_BASE_URL } from '@/lib/config';
+import { useSessionCleanup } from '@/hooks/useSessionCleanup';
 
 export default function ChangeBio() {
   const router = useRouter();
+  const { newRequest, cancelToken, clearToken } = useSessionCleanup();
   const [files, setFiles] = useState<File[]>([]);
   const [extractedSessions, setExtractedSessions] = useState<any[]>([]);
   const [extractionData, setExtractionData] = useState<any>(null);
@@ -125,11 +127,14 @@ export default function ChangeBio() {
           path: session.path,
           new_bio: bioInputs[index]?.trim() || ''
         })),
-        extraction_data: extractionData
+        extraction_data: extractionData,
+        cancel_token: cancelToken,
       };
 
+      const signal = newRequest();
       const response = await fetch(`${API_BASE_URL}/api/change-bios`, {
         method: 'POST',
+        signal,
         headers: {
           'Content-Type': 'application/json',
         },
@@ -143,8 +148,9 @@ export default function ChangeBio() {
 
       const data = await response.json();
       setResults(data.results || {});
+      clearToken();
     } catch (err: any) {
-      setError(err.message || 'Failed to update bios');
+      if ((err as any)?.name !== 'AbortError') setError(err.message || 'Failed to update bios');
     } finally {
       setIsUpdating(false);
     }

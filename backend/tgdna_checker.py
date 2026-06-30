@@ -305,13 +305,14 @@ def parse_tgdna_response(message_text: str) -> Dict[str, Any]:
     return result
 
 
-async def check_sessions_age_parallel(sessions: list) -> Dict[int, Dict[str, Any]]:
+async def check_sessions_age_parallel(sessions: list, cancel_event=None) -> Dict[int, Dict[str, Any]]:
     """
     Check account age for multiple sessions in parallel.
-    
+
     Args:
         sessions: List of session dicts with 'path' key
-    
+        cancel_event: optional asyncio.Event; when set, pending sessions are skipped
+
     Returns:
         Dict mapping session index to check result
     """
@@ -324,14 +325,20 @@ async def check_sessions_age_parallel(sessions: list) -> Dict[int, Dict[str, Any
                 "error": "No session path provided",
                 "index": index
             }
-        
+
         result = await check_session_age_tgdna(session_path)
         result["index"] = index
         return index, result
-    
+
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_SESSIONS)
     async def sem_task(session_info: Dict[str, Any], index: int):
+        if cancel_event and cancel_event.is_set():
+            path = session_info.get("path", "unknown")
+            return index, {"success": False, "cancelled": True, "session": path, "error": "Cancelled", "index": index}
         async with semaphore:
+            if cancel_event and cancel_event.is_set():
+                path = session_info.get("path", "unknown")
+                return index, {"success": False, "cancelled": True, "session": path, "error": "Cancelled", "index": index}
             return await check_with_index(session_info, index)
     tasks = [sem_task(session_info, idx) for idx, session_info in enumerate(sessions)]
     results_list = await asyncio.gather(*tasks, return_exceptions=True)

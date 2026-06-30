@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import FileUpload from '@/components/FileUpload';
 import { API_BASE_URL } from '@/lib/config';
+import { useSessionCleanup } from '@/hooks/useSessionCleanup';
 
 interface Session { name: string; path: string; }
 interface SessionResult {
@@ -51,6 +52,7 @@ function PasswordInput({ value, onChange, placeholder, show, onToggle, label, hi
 
 export default function Change2FA() {
   const router = useRouter();
+  const { newRequest, cancelToken, clearToken } = useSessionCleanup();
   const [isExtracting, setIsExtracting] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [defaultCurrentPass, setDefaultCurrentPass] = useState('');
@@ -101,13 +103,16 @@ export default function Change2FA() {
         }))
       : sessions.map(s => ({ path: s.path, name: s.name }));
     try {
+      const signal = newRequest();
       const res = await fetch(`${API_BASE_URL}/api/change-2fa`, {
         method: 'POST',
+        signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sessions: targetSessions,
           default_current_password: defaultCurrentPass || null,
           new_password: disableMode ? null : (newPass || null),
+          cancel_token: cancelToken,
         }),
       });
       if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Request failed'); }
@@ -124,8 +129,9 @@ export default function Change2FA() {
         setShowSuccessList(false);
         setShowFailedList(true);
       }
+      clearToken();
     } catch (err: any) {
-      setError(err.message || 'Something went wrong');
+      if ((err as any)?.name !== 'AbortError') setError(err.message || 'Something went wrong');
     } finally {
       setIsProcessing(false);
     }
