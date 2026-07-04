@@ -270,9 +270,17 @@ async def extract_sessions_from_zip(zip_path: str) -> List[Dict[str, Any]]:
                         "name": session_name,
                         "path": session_path
                     })
+
+        # Normalize incompatible session files so they load on every page
+        try:
+            from session_normalizer import normalize_session_file
+            for s in sessions:
+                normalize_session_file(s["path"])
+        except Exception as e:
+            logger.warning("[extract_sessions_from_zip] normalize skipped: %s", e)
     except Exception as e:
         raise Exception(f"Error extracting ZIP: {str(e)}")
-    
+
     return sessions
 
 

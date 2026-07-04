@@ -280,7 +280,16 @@ async def extract_sessions(file: UploadFile = File(...)):
                                 "name": session_name,
                                 "path": session_path
                             })
-                
+
+                # Normalize any session files that were made by an incompatible
+                # Telethon build so they load correctly on every page.
+                try:
+                    from session_normalizer import normalize_session_file
+                    repaired = sum(1 for s in sessions if normalize_session_file(s["path"]))
+                    logger.info("[FLOW] extract_sessions normalized %s/%s sessions", repaired, len(sessions))
+                except Exception as e:
+                    logger.warning("[FLOW] extract_sessions normalize skipped: %s", e)
+
                 logger.info("[FLOW] extract_sessions upload=zip sessions=%s", len(sessions))
                 return {
                     "sessions": sessions,
@@ -290,6 +299,11 @@ async def extract_sessions(file: UploadFile = File(...)):
                 }
             else:
                 session_name = filename.replace('.session', '')
+                try:
+                    from session_normalizer import normalize_session_file
+                    normalize_session_file(temp_file)
+                except Exception as e:
+                    logger.warning("[FLOW] extract_sessions normalize skipped: %s", e)
                 logger.info("[FLOW] extract_sessions upload=single session=%s", session_name)
                 return {
                     "sessions": [{"name": session_name, "path": temp_file}],
