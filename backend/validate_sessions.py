@@ -389,7 +389,7 @@ async def validate_sessions_parallel(session_paths: List[Dict[str, Any]], websoc
                     pass
                 # #endregion
                 error_result = {
-                    "status": "ERROR",
+                    "status": SessionStatus.UNAUTHORIZED,
                     "session_name": name,
                     "logged_in": False,
                     "can_send": False,
@@ -397,14 +397,14 @@ async def validate_sessions_parallel(session_paths: List[Dict[str, Any]], websoc
                     "error": str(e),
                     "message": f"Error validating {name}: {str(e)}"
                 }
-                
+
                 if websocket:
                     await websocket.send_json({
                         "type": "result",
                         "index": index,
                         "session_name": name,
                         "result": error_result,
-                        "status": "ERROR",
+                        "status": SessionStatus.UNAUTHORIZED,
                         "message": f"{name} failed",
                         "total": len(session_paths)
                     })

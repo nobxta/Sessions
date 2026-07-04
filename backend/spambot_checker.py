@@ -1,6 +1,7 @@
 from telethon import TelegramClient, errors, events
 import asyncio
 import re
+import traceback
 from typing import Dict, Any, Tuple, Optional
 from async_timeout import run_with_timeout, CONNECT_TIMEOUT, API_TIMEOUT, TIMEOUT_SENTINEL
 from concurrency_config import MAX_CONCURRENT_SESSIONS
@@ -55,9 +56,9 @@ async def check_session_health_spambot(
     if session_path.endswith('.session'):
         session_path = session_path[:-8]
     logger.info("[SESSION START] %s", session_path)
-    client = TelegramClient(session_path, api_id, api_hash)
-    
+
     try:
+        client = TelegramClient(session_path, api_id, api_hash)
         logger.info("[SESSION ACTION] %s connect", session_path)
         # Use non-interactive connect() to avoid Telethon prompting for phone input
         r = await run_with_timeout(client.connect(), CONNECT_TIMEOUT, default=TIMEOUT_SENTINEL, session_path=session_path)
@@ -284,15 +285,17 @@ async def check_sessions_health_parallel(sessions: list, cancel_event=None) -> D
     
     # Handle exceptions
     results = {}
-    for item in results_list:
-        if isinstance(item, Exception):
-            idx = results_list.index(item)
-            results[idx] = {
+    for i, item in enumerate(results_list):
+        if isinstance(item, BaseException):
+            tb = "".join(traceback.format_exception(type(item), item, item.__traceback__))
+            logger.error("[SPAMBOT ERROR] session=%s error=%s\n%s",
+                         sessions[i].get("path", "unknown"), str(item), tb)
+            results[i] = {
                 "success": False,
-                "session": sessions[idx].get("path", "unknown"),
+                "session": sessions[i].get("path", "unknown"),
                 "status": SessionHealthStatus.FAILED,
-                "details": f"Exception: {str(item)}",
-                "index": idx
+                "details": f"Error: {str(item)}",
+                "index": i
             }
         else:
             idx, result = item
